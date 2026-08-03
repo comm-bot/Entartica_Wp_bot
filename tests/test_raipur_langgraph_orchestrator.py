@@ -309,3 +309,37 @@ def test_enabled_graph_automatic_reply_eligibility_keeps_graph_selection_metadat
     assert result.safe_metadata["service_code"] == before["service_code"] == "speed_boat_ride"
     assert result.safe_metadata["topic"] == before["topic"] == "swimming"
     assert result.safe_metadata["selected_route"] == before["selected_route"] == "answer_service_knowledge"
+
+
+def test_enabled_graph_end_to_end_dynamic_pipeline_keeps_routes_and_context_isolated(monkeypatch):
+    class PipelineKnowledge(_Knowledge):
+        def answer_service_details(self, _question, _service_name, service_code, **kwargs):
+            facts = {
+                ("daycation_package", "overview"): ("The Daycation Package is an approved full-day Raipur experience.", "Definition"),
+                ("daycation_package", "inclusions"): ("The Daycation Package includes approved day-use access.", "What Is Typically Included"),
+                ("speed_boat_ride", "swimming"): ("Swimming ability is not required. All passengers are provided with mandatory high-buoyancy life jackets before boarding.", "Swimming Requirement"),
+                ("jet_ski_ride", "duration"): ("The Jet Ski Ride generally lasts around 5 to 10 minutes per session.", "Duration"),
+                ("kayaking", "overview"): ("Kayaking at Entartica is an approved Raipur water activity.", "Definition"),
+            }
+            text, heading = facts[(service_code, kwargs["detail_mode"])]
+            return KnowledgeDraft(text, f"{service_code}.md", .8, False, heading, 1, service_code, (heading,))
+    orchestrator = _orchestrator(monkeypatch, PipelineKnowledge())
+    expected = [
+        ("Tell me about Daycation.", "answer_service_knowledge", "daycation_package", "overview"),
+        ("What is included in Daycation?", "answer_service_knowledge", "daycation_package", "inclusions"),
+        ("Is swimming required for Speed Boat?", "answer_service_knowledge", "speed_boat_ride", "swimming"),
+        ("What is the duration of Jet Ski?", "answer_service_knowledge", "jet_ski_ride", "duration"),
+        ("What is the location?", "answer_location", None, None),
+        ("What rides are available?", "answer_catalogue", None, None),
+        ("What is the price of Jet Ski?", "handover_to_sales", None, None),
+        ("What is kayaking?", "answer_general_openai", None, None),
+        ("Tell me about Kayaking at Entartica.", "answer_service_knowledge", "kayaking", "overview"),
+        ("What exact engine does your Speed Boat use?", "answer_unknown_entartica_fact", "speed_boat_ride", "technical_specification"),
+        ("Thank you.", "answer_greeting", None, None),
+    ]
+    for message, route, service, topic in expected:
+        result = _process(orchestrator, message)
+        assert result.safe_metadata["selected_route"] == route
+        assert result.safe_metadata.get("service_code") == service
+        assert result.safe_metadata.get("topic") == topic
+    assert "5 to 10 minutes" in _process(orchestrator, "What is the duration of Jet Ski?").draft_text

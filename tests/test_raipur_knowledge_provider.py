@@ -90,6 +90,40 @@ def test_duration_ranking_excludes_operating_hours_even_when_it_has_a_higher_sco
  assert result.text and '5 to 10 minutes' in result.text and 'current hours' not in result.text.casefold()
 
 
+def test_overview_and_inclusion_ranking_exclude_internal_comparison_and_suitable_sections():
+ metadata={'location_code':'raipur','service_code':'daycation_package','customer_facing':True,'is_active':True,'approval_status':'approved','retrieval_priority':'service_specific'}
+ rows=[
+  candidate(.99,content='Suitable participants.',metadata=metadata | {'section_heading':'Suitable For'}),
+  candidate(.98,content='Internal example text.',metadata=metadata | {'section_heading':'Suggested Chatbot Response'}),
+  candidate(.97,content='Comparison text.',metadata=metadata | {'section_heading':'Comparison with Similar Packages'}),
+  candidate(.70,content='The Daycation Package is a full-day experience.',metadata=metadata | {'section_heading':'Definition'}),
+  candidate(.69,content='It includes approved day-use access.',metadata=metadata | {'section_heading':'What Is Typically Included'}),
+ ]
+ overview=provider(rows).answer_service_details('Tell me about Daycation at Entartica','Daycation Package','daycation_package')
+ inclusions=provider(rows).answer_service_details('What is included in Daycation?','Daycation Package','daycation_package',detail_mode='inclusions')
+ assert overview.section_heading == 'Definition'
+ assert inclusions.section_heading == 'What Is Typically Included'
+ assert all('Suggested Chatbot Response' not in heading and 'Comparison' not in heading for heading in overview.retrieved_section_headings)
+
+
+def test_exact_topic_fallback_uses_only_the_active_approved_heading_when_embedding_fails():
+ class Response:
+  def __init__(self,data): self.data=data
+ class Query:
+  def __init__(self,client,name): self.client,self.name=client,name
+  def select(self,*_args): return self
+  def eq(self,*_args): return self
+  def execute(self): return Response(self.client.docs if self.name=='knowledge_documents' else self.client.chunks)
+ class Client:
+  docs=[{'id':'jet-doc','source_file':'jet_ski_ride.md','is_active':True,'metadata':{'location_code':'raipur','service_code':'jet_ski_ride','approval_status':'approved','customer_facing':True}}]
+  chunks=[{'knowledge_document_id':'jet-doc','content':'The Jet Ski Ride generally lasts around 5 to 10 minutes per session.','metadata':{'section_heading':'Duration'}}]
+  def table(self,name): return Query(self,name)
+ value=RaipurKnowledgeProvider(Client(),settings(),embed_query_fn=lambda *_:(_ for _ in ()).throw(RuntimeError('offline')))
+ result=value.answer_service_details('What is the duration of Jet Ski?','Jet Ski','jet_ski_ride',detail_mode='duration')
+ assert result.text == 'The Jet Ski Ride generally lasts around 5 to 10 minutes per session.'
+ assert result.source_filename == 'jet_ski_ride.md' and result.section_heading == 'Duration'
+
+
 def test_parent_active_retrieval_does_not_require_a_chunk_level_active_filter():
  metadata={'location_code':'raipur','service_code':'jet_ski_ride','customer_facing':True,'approval_status':'approved','retrieval_priority':'service_specific'}
  active_parent=provider([candidate(.8,content='Jet Ski Ride safety requirements are confirmed with staff.',metadata=metadata)]).answer_service_details('Jet Ski safety','Jet Ski','jet_ski_ride')

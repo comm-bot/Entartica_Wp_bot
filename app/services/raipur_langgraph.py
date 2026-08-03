@@ -26,7 +26,7 @@ logger = logging.getLogger("uvicorn.error")
 
 GraphIntent = Literal[
     "greeting", "location", "venue_overview", "service_catalogue",
-    "service_overview", "service_topic", "general_question", "pricing",
+    "service_overview", "service_topic", "venue_facility", "general_question", "pricing",
     "booking", "availability", "payment", "cancellation_refund",
     "human_support", "unknown_entartica_fact", "contextual_service_followup",
 ]
@@ -83,13 +83,16 @@ class RaipurGraphState(TypedDict):
 _RESTRICTED = {"pricing", "booking", "availability", "payment", "cancellation_refund", "human_support"}
 _TOPIC_WORDS = {
     "capacity": ("capacity", "seater", "kitne log", "how many people"),
-    "duration": ("duration", "how long", "kitni der", "timing"),
+    "duration": ("duration", "how long", "how long does it last", "kitni der", "kitne time", "kitna time", "kitne minute", "kab tak"),
     "inclusions": ("included", "inclusion", "isme kya", "what is included"),
     "safety": ("safety", "life jacket"),
     "swimming": ("swimming", "swim"),
     "operating_hours": ("operating hours", "opening", "closing", "hours"),
     "eligibility": ("pregnant", "pregnancy", "child", "children", "eligible"),
+    "how_it_works": ("how does it work", "how it works", "what happens", "kaise hota", "kaise chalta"),
 }
+
+_FACILITY_WORDS = ("parking", "washroom", "toilet", "locker", "changing room", "food", "restaurant", "wheelchair", "entry gate", "seating", "wi-fi", "wifi", "first aid")
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,33 @@ _TECHNICAL_SPECIFICATION = re.compile(
     r"propeller|battery\s+model|equipment\s+model|current\s+operator|who\s+is\s+operating|registration\s+number)\b",
     re.I,
 )
+
+
+def _is_greeting_or_closing(text: str) -> bool:
+    return bool(re.fullmatch(r"\s*(?:hi+|hello|hey|namaste|thank\s+you|thanks|okay\s+thanks|great|got\s+it|bye|goodbye)\s*[.!]?\s*", text, re.I))
+
+
+def _is_gratitude(text: str) -> bool:
+    return bool(re.fullmatch(r"\s*(?:thank\s+you|thanks|okay\s+thanks|great\s*,?\s*thanks|that\s+helped|got\s+it)\s*[.!]?\s*", text, re.I))
+
+
+def _is_generic_service_concept_question(text: str, topic: str | None) -> bool:
+    value=text.casefold()
+    if topic is not None or any(term in value for term in ("entartica","raipur","offered","offer","available","price","booking","book","location")):
+        return False
+    return bool(re.search(r"\b(?:what\s+is|how\s+does)\b", value))
+
+
+def _acknowledgement(language: str) -> str:
+    if language == "hinglish": return "Aapka swagat hai. Agar aapko kisi Raipur activity ya service ke baare mein aur help chahiye, bataiye."
+    if language == "hi": return "आपका स्वागत है। अगर आपको किसी रायपुर गतिविधि या सेवा के बारे में और सहायता चाहिए, तो बताइए।"
+    return "You’re welcome. Let me know if you would like help with any Raipur activity or service."
+
+
+def _greeting_reply(language: str) -> str:
+    if language == "hinglish":
+        return "Hello! Entartica Sea World, Raipur ke baare mein main aapki kaise help kar sakta hoon?"
+    return "Hello! How may I help you with Entartica Sea World, Raipur?"
 
 
 def approved_facts_from_draft(draft: KnowledgeDraft, *, service_code: str | None, service_name: str | None, topic: str | None) -> ApprovedFacts:
@@ -309,6 +339,7 @@ class RaipurLangGraphWorkflow:
         graph.add_node("answer_service_knowledge", self.answer_existing)
         graph.add_node("answer_venue_knowledge", self.answer_existing)
         graph.add_node("answer_general_openai", self.answer_existing)
+        graph.add_node("answer_unknown_entartica_fact", self.answer_existing)
         graph.add_node("handover_to_sales", self.answer_existing)
         graph.add_node("validate_customer_response", self.validate_customer_response)
         graph.add_node("save_conversation_state", self.save_conversation_state)
@@ -318,9 +349,10 @@ class RaipurLangGraphWorkflow:
             "answer_greeting": "answer_greeting", "answer_location": "answer_location",
             "answer_catalogue": "answer_catalogue", "answer_service_knowledge": "answer_service_knowledge",
             "answer_venue_knowledge": "answer_venue_knowledge", "answer_general_openai": "answer_general_openai",
+            "answer_unknown_entartica_fact": "answer_unknown_entartica_fact",
             "handover_to_sales": "handover_to_sales",
         })
-        for node in ("answer_greeting", "answer_location", "answer_catalogue", "answer_service_knowledge", "answer_venue_knowledge", "answer_general_openai", "handover_to_sales"):
+        for node in ("answer_greeting", "answer_location", "answer_catalogue", "answer_service_knowledge", "answer_venue_knowledge", "answer_general_openai", "answer_unknown_entartica_fact", "handover_to_sales"):
             graph.add_edge(node, "validate_customer_response")
         graph.add_edge("validate_customer_response", "save_conversation_state")
         graph.add_edge("save_conversation_state", END)
@@ -374,6 +406,8 @@ class RaipurLangGraphWorkflow:
             return MessagePlan(intent="location", entity_type="venue", topic=None, confidence=1.0)
         if is_service_catalogue_question(text):
             return MessagePlan(intent="service_catalogue", entity_type="catalogue", confidence=1.0)
+        if _is_greeting_or_closing(text):
+            return MessagePlan(intent="greeting", entity_type="general", use_previous_service=False, confidence=1.0)
         service = approved_service_from_message(text)
         if _is_technical_specification_question(text):
             return MessagePlan(
@@ -381,15 +415,19 @@ class RaipurLangGraphWorkflow:
                 service_code=knowledge_service_code(service) if service is not None else None, topic="technical_specification",
                 use_previous_service=False, confidence=1.0,
             )
+        if any(term in text for term in _FACILITY_WORDS):
+            return MessagePlan(intent="venue_facility", entity_type="venue", use_previous_service=False, confidence=1.0)
         restricted = (("pricing", ("price", "pricing", "quote", "quotation")), ("booking", ("book", "booking", "reserve")), ("availability", ("available", "availability", "slot", "tomorrow")), ("payment", ("payment", "pay")), ("cancellation_refund", ("cancel", "refund")), ("human_support", ("human", "agent", "sales", "contact")))
         for intent, terms in restricted:
             if any(term in text for term in terms):
                 return MessagePlan(intent=intent, entity_type="service", requires_sales_handover=True, handover_reason=intent, confidence=1.0)
         topic = next((name for name, terms in _TOPIC_WORDS.items() if any(term in text for term in terms)), None)
+        if service is not None and _is_generic_service_concept_question(text, topic):
+            return MessagePlan(intent="general_question", entity_type="general", use_previous_service=False, confidence=1.0)
         if service is not None:
             return MessagePlan(intent="service_topic" if topic else "service_overview", entity_type="service", service_code=knowledge_service_code(service), topic=topic or "overview", confidence=0.98)
         followup = any(term in text for term in ("tell me more", "more details", "how long is it", "isme", "usme", "it?"))
-        if previous_service_code and followup:
+        if previous_service_code and (followup or topic is not None):
             return MessagePlan(intent="contextual_service_followup", entity_type="service", service_code=previous_service_code, topic=topic or "more_details", use_previous_service=True, confidence=0.9)
         if _is_venue_overview_question(text):
             return MessagePlan(intent="venue_overview", entity_type="venue", use_previous_service=False, confidence=0.9)
@@ -409,7 +447,8 @@ class RaipurLangGraphWorkflow:
         if intent == "location": return "answer_location"
         if intent == "service_catalogue": return "answer_catalogue"
         if intent in {"service_overview", "service_topic", "contextual_service_followup"}: return "answer_service_knowledge"
-        if intent == "venue_overview": return "answer_venue_knowledge"
+        if intent in {"venue_overview", "venue_facility"}: return "answer_venue_knowledge"
+        if intent == "unknown_entartica_fact": return "answer_unknown_entartica_fact"
         return "answer_general_openai"
 
     @staticmethod
@@ -436,7 +475,7 @@ class RaipurLangGraphWorkflow:
 
     def _repair_plan_consistency(self, text: str, mapped: MessagePlan, previous_service_code: str | None) -> tuple[MessagePlan, bool]:
         """Current explicit entities deterministically override a stale planner result."""
-        if mapped.intent in _RESTRICTED or mapped.intent == "unknown_entartica_fact":
+        if mapped.intent in _RESTRICTED or mapped.intent in {"unknown_entartica_fact", "general_question", "greeting"}:
             return mapped, False
         service = approved_service_from_message(text)
         explicit_topic = next((name for name, terms in _TOPIC_WORDS.items() if any(term in text for term in terms)), None)
@@ -474,7 +513,8 @@ class RaipurLangGraphWorkflow:
             "topic": state.get("topic"),
         }
         if route == "answer_greeting":
-            draft, intent = _greeting(language), "greeting"
+            draft, intent = (_acknowledgement(language) if _is_gratitude(state["normalized_message"]) else _greeting_reply(language)), "greeting"
+            context = self._clear_service_context(context)
         elif route == "answer_location":
             draft, intent = _structured_location_answer(self._location, language) or self._safe_fallback(language), "location"
             context = self._clear_service_context(context)
@@ -488,8 +528,12 @@ class RaipurLangGraphWorkflow:
             draft, context, response_basis, grounding = self._service_answer(state, context, text, language)
             intent = state["intent"]
         elif route == "answer_venue_knowledge":
-            draft, grounding = self._venue_answer(text, language)
-            intent, response_basis = "venue_overview", "active_rag"
+            if state["intent"] == "venue_facility":
+                draft, grounding = "This facility information is not confirmed in the approved knowledge currently available.", {"answer_source": "facility_not_confirmed"}
+                intent, response_basis = "venue_facility", "deterministic"
+            else:
+                draft, grounding = self._venue_answer(text, language)
+                intent, response_basis = "venue_overview", "active_rag"
             context = self._clear_service_context(context)
         else:
             draft, intent, response_basis = self._general_or_unknown(state, text, language)
@@ -501,7 +545,9 @@ class RaipurLangGraphWorkflow:
         return {"result": result, "draft_response": draft, "answer_source": source}
 
     def _result(self, draft: str, intent: str, language: str, handover: bool, context: ConversationContext, basis: str, source: str, grounding: dict[str, Any] | None = None) -> ConversationResult:
-        metadata = {"response_basis": basis, "customer_response_sanitized": True, "response_mode": "human_handover" if handover else "grounded_answer", "graph_answer_source": source, "answer_source": source, "automatic_reply_category": "information"}
+        modes={"answer_location":"deterministic_location","answer_catalogue":"deterministic_catalogue","handover_to_sales":"human_handover","answer_unknown_entartica_fact":"unknown_fact","answer_greeting":"conversational_acknowledgement"}
+        mode=modes.get(source,"grounded_answer" if basis=="active_rag" else "clarification_question" if basis=="clarification" else "grounded_answer")
+        metadata = {"response_basis": basis, "customer_response_sanitized": True, "response_mode": mode, "graph_answer_source": source, "answer_source": source, "automatic_reply_category": "information"}
         if isinstance(grounding, dict):
             metadata.update({key: value for key, value in grounding.items() if value is not None})
         return ConversationResult("general_human_handover" if handover else "answer_information", draft, "graph_route", intent, "raipur", language, handover, False, False, None, None, True, False, context, metadata, None, bool(draft.strip()), "safe" if draft.strip() else "empty")
@@ -510,6 +556,8 @@ class RaipurLangGraphWorkflow:
         code = state.get("service_code"); service = next((item for item in APPROVED_RAIPUR_SERVICES if knowledge_service_code(item) == code), None)
         if service is None or self._knowledge is None: return self._safe_fallback(language), context, "clarification", {}
         try:
+            # The provider performs an exact approved-section lookup before it
+            # considers query embeddings or vector search for a known topic.
             answer = self._knowledge.answer_service_details(text, service.name, code, detail_mode=state.get("topic") or "overview")
         except Exception: answer = None
         if isinstance(answer, KnowledgeDraft) and not answer.low_confidence and isinstance(answer.text, str) and answer.text.strip():

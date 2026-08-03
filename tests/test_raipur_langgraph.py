@@ -69,6 +69,25 @@ def test_known_service_topics_use_canonical_codes_and_priority():
         assert (update["intent"], update["service_code"], update["topic"]) == ("service_topic", service_code, topic)
 
 
+def test_generic_service_definitions_do_not_use_entartica_service_context():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    for message in ("What is kayaking?", "What is a pontoon boat?", "What is a jet ski?", "How does kayaking generally work?"):
+        plan = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
+        assert plan["intent"] == "general_question"
+        assert plan["selected_route"] == "answer_general_openai"
+        assert plan["service_code"] is None and plan["use_previous_service"] is False
+    specific = workflow.plan_message({**state("Tell me about Kayaking at Entartica."), "_runtime": {"current_state": None}})
+    assert (specific["intent"], specific["service_code"], specific["selected_route"]) == ("service_overview", "kayaking", "answer_service_knowledge")
+
+
+def test_unknown_facts_and_thanks_use_dedicated_deterministic_routes():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    unknown = workflow.plan_message({**state("What exact engine does your Speed Boat use?"), "_runtime": {"current_state": None}})
+    thanks = workflow.plan_message({**state("Thank you."), "_runtime": {"current_state": None}})
+    assert unknown["selected_route"] == "answer_unknown_entartica_fact"
+    assert (thanks["intent"], thanks["service_code"], thanks["topic"], thanks["use_previous_service"]) == ("greeting", None, None, False)
+
+
 def test_named_service_is_not_misrouted_to_the_catalogue():
     workflow = RaipurLangGraphWorkflow(FakeConversation())
     plan = workflow.plan_message({**state("Tell me about the Jet Ski Ride"), "_runtime": {"current_state": None}})

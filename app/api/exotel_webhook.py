@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 from functools import lru_cache
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -22,6 +23,23 @@ from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
 
 router = APIRouter(prefix="/webhooks/exotel", tags=["exotel"])
 logger = logging.getLogger("uvicorn.error")
+_conversation_locks: dict[str, asyncio.Lock] = {}
+_conversation_locks_guard = asyncio.Lock()
+
+
+async def _lock_for_inbound(message) -> asyncio.Lock:
+    """Return the bounded, process-local lock for one customer conversation.
+
+    The sender number is used only as an opaque in-memory key.  It is never
+    logged or persisted by this helper; distinct customers remain concurrent.
+    """
+    key = getattr(message, "customer_whatsapp_number", "")
+    async with _conversation_locks_guard:
+        lock = _conversation_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _conversation_locks[key] = lock
+        return lock
 
 
 def get_inbound_message_service() -> InboundMessageService:
@@ -66,20 +84,31 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
 
         for message in messages:
           try:
-            result = await run_in_threadpool(service.process, message)
-            if result.duplicate:
+            lock = await _lock_for_inbound(message)
+            async with lock:
+             await _process_one_inbound_message(service, message, settings, trace)
+          except Exception:
+            # Never turn a later database/RAG failure into an Exotel webhook error.
+            logger.error("exotel_inbound_background_failed operation=inbound_persistence request_id=%s", trace.request_id)
+            trace.summary()
+
+
+async def _process_one_inbound_message(service, message, settings, trace: LatencyTrace) -> None:
+    """Run the full persistence-to-reply lifecycle under one conversation lock."""
+    result = await run_in_threadpool(service.process, message)
+    if result.duplicate:
                 logger.info("orchestration_skipped request_id=%s reason=duplicate_inbound", trace.request_id)
                 trace.summary(intent="duplicate", response_mode="duplicate", response_basis="none")
-                continue
-            if not getattr(settings, "raipur_inbound_orchestrator_enabled", False):
+                return
+    if not getattr(settings, "raipur_inbound_orchestrator_enabled", False):
                 logger.info("orchestration_skipped request_id=%s reason=feature_disabled", trace.request_id)
                 trace.summary(intent="feature_disabled", response_mode="none", response_basis="none")
-                continue
-            if message.message_type != "text" or result.customer is None or result.conversation is None:
+                return
+    if message.message_type != "text" or result.customer is None or result.conversation is None:
                 logger.info("orchestration_skipped reason=unsupported_inbound_type")
-                continue
+                return
 
-            try:
+    try:
                 logger.info("orchestration_started request_id=%s", trace.request_id)
                 with latency_stage("deterministic_routing"):
                     orchestration = await run_in_threadpool(
@@ -157,13 +186,9 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
                     response_mode=metadata.get("response_mode") if isinstance(metadata, dict) else None,
                     response_basis=metadata.get("response_basis") if isinstance(metadata, dict) else None,
                 )
-            except Exception:
+    except Exception:
                 logger.error("exotel_inbound_background_failed operation=orchestration request_id=%s", trace.request_id)
                 trace.summary()
-          except Exception:
-            # Never turn a later database/RAG failure into an Exotel webhook error.
-            logger.error("exotel_inbound_background_failed operation=inbound_persistence request_id=%s", trace.request_id)
-            trace.summary()
 
 
 @router.post("/inbound", status_code=200)
