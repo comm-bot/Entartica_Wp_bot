@@ -1,0 +1,7 @@
+service_name,availability_date,start_time,end_time,total_capacity,available_capacity,operational_status,verified_at,data_owner,internal_note
+Jet Ski,2099-01-01,10:00,11:00,5,5,available,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC
+Jet Ski,2099-01-01,12:00,13:00,5,1,limited,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC
+Jet Ski,2099-01-01,14:00,15:00,5,0,full,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC
+Jet Ski,2099-01-01,16:00,17:00,5,0,weather_hold,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC
+Jet Ski,2099-01-01,18:00,19:00,5,0,maintenance,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC
+Jet Ski,2099-01-01,20:00,21:00,5,0,verification_required,2099-01-01T09:50:00+05:30,Test Operations,DO NOT IMPORT – SYNTHETIC

@@ -1,0 +1,17 @@
+{
+  "code": "raipur",
+  "name": "Entartica Sea World Raipur",
+  "city": "Raipur",
+  "state": "Chhattisgarh",
+  "country": "India",
+  "status": "active",
+  "booking_enquiry_enabled": true,
+  "requires_human_confirmation": true,
+  "requires_human_quotation": true,
+  "address": "Sector 24, Jhanjh Lake, Atal Nagar, New Raipur, Chhattisgarh",
+  "address_line": "Sector 24, Jhanjh Lake, Atal Nagar, New Raipur, Chhattisgarh",
+  "landmark": "Near MAYFAIR Resort",
+  "maps_url": "https://maps.app.goo.gl/VtxPyANfMC3rztex8",
+  "contact_reference": "TO_BE_APPROVED",
+  "operating_hours": "TO_BE_APPROVED"
+}

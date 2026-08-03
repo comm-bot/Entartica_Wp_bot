@@ -37,3 +37,28 @@ python -m pytest
 ## Configuration
 
 Configuration is read from environment variables through `app/config.py`. Keep real credentials in the untracked `.env` file or your deployment secret manager; never commit them.
+
+## Raipur knowledge ingestion
+
+Customer-facing Raipur Markdown is controlled by `documents/raipur/governance/manifests/raipur_knowledge_manifest.csv`. It covers services, celebrations, general information, FAQs, and policies. Only manifest-ready, active, approved, customer-facing Raipur `.md` files with valid matching front matter are eligible. Governance files and `documents/raipur/reference_archive` are never scanned or embedded.
+
+Review before any database change:
+
+```powershell
+python scripts/ingest_raipur_knowledge.py --dry-run
+```
+
+After review and explicit approval, ingest with:
+
+```powershell
+python scripts/ingest_raipur_knowledge.py
+```
+
+The unified ingester stages a replacement, verifies its chunks, then activates it and deactivates only the prior active version of the same source file. It never deletes knowledge rows. `scripts/ingest_raipur_celebrations.py` is deliberately disabled legacy tooling, so it cannot create competing active documents.
+
+The canonical customer-facing Raipur corpus is the active Markdown set under `documents/raipur/active`; all 16 services, including celebration services, live under `active/services`. Legacy DOCX files are retained under `documents/raipur/reference_archive/source_documents`, and governance CSVs are retained under `documents/raipur/governance`; neither is embedded. Generate the local inventory and optional read-only database comparison with:
+
+```powershell
+python scripts/audit_raipur_knowledge_inventory.py
+python scripts/audit_raipur_knowledge_inventory.py --database
+```

@@ -1,0 +1,8 @@
+# Proposed Raipur booking-policy clarifications — approval draft only
+
+| Proposed customer question | Proposed answer | Supporting source / section | Confidence already approved | Management approval required |
+| --- | --- | --- | --- | --- |
+| What details are collected for a booking enquiry? | The chatbot collects the approved enquiry details and transfers the enquiry to the authorized team for review. | `raipur_booking_policy.docx` / Information to Collect; Enquiry and Confirmation Process | High | Yes — document amendment approval |
+| How is final booking confirmation provided? | The authorized team checks availability, operating conditions, safety clearance, and service suitability. A booking is confirmed only after that team issues confirmation and the required advance payment is received. | `raipur_booking_policy.docx` / Enquiry and Confirmation Process; Payment | High | Yes — document amendment approval |
+| Can the chatbot confirm availability or a booking? | No. Rates, ride availability, decoration, and event inclusions are subject to confirmation. The authorized team makes the final decision on availability and booking confirmation. | `raipur_booking_policy.docx` / Availability and Operational Conditions | High | Yes — document amendment approval |
+| Can I book a group or corporate event? | APPROVAL REQUIRED – SOURCE INFORMATION MISSING. The source supports a private-group Party Boat quotation but does not approve a general group-booking or corporate-event policy. | `raipur_services.docx` / Party Boat Celebration; `raipur_booking_policy.docx` / Pricing and Quotation | Partial only | Yes |

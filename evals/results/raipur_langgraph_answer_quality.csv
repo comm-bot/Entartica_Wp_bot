@@ -1,0 +1,79 @@
+case_id,turn_number,customer_message,detected_language,intent,route,service_code,topic,used_previous_service,retrieved_section_headings,retrieved_document_ids,answer_source,validation_passed,validation_errors,deterministic_fallback_used,openai_call_count,latency_ms,final_response
+offline-1,1,What are the rides?,en,service_catalogue,answer_catalogue,,,False,(),[],answer_catalogue,True,[],False,0,15.41,"Raipur mein available experiences:
+• Staycation Combo
+• Daycation Package
+• Pontoon Boat
+• Kayak
+• Speed Boat
+• Aqua Cycle
+• Jet Ski
+• Water Bike
+• Inflatable Sofa Ride
+• Bumper Boat
+• Kids' Paddle Boat
+• Pontoon Celebration
+• Floating Gazebo
+• Jetty Gazebo
+• Houseboat Celebration
+• Party Boat Celebration"
+offline-2,1,Can you provide other rides?,en,service_catalogue,answer_catalogue,,,False,(),[],answer_catalogue,True,[],False,0,4.59,"Raipur mein available experiences:
+• Staycation Combo
+• Daycation Package
+• Pontoon Boat
+• Kayak
+• Speed Boat
+• Aqua Cycle
+• Jet Ski
+• Water Bike
+• Inflatable Sofa Ride
+• Bumper Boat
+• Kids' Paddle Boat
+• Pontoon Celebration
+• Floating Gazebo
+• Jetty Gazebo
+• Houseboat Celebration
+• Party Boat Celebration"
+offline-3,1,What is the location of Raipur?,en,location,answer_location,,location,False,(),[],answer_location,True,[],False,0,5.8,The exact information is not confirmed. Please contact the Entartica team for verification.
+offline-4,1,Raipur kaha hai?,hinglish,location,answer_location,,location,False,(),[],answer_location,True,[],False,0,3.63,The exact information is not confirmed. Please contact the Entartica team for verification.
+offline-5,1,What is the capacity of Speed Boat?,en,service_topic,answer_service_knowledge,speed_boat_ride,capacity,False,"('capacity',)",[],answer_service_knowledge,True,[],False,0,4.08,Speed Boat approved capacity information is available.
+offline-6,1,Hat is the capacity of speed baot.,en,service_topic,answer_service_knowledge,speed_boat_ride,capacity,False,"('capacity',)",[],answer_service_knowledge,True,[],False,0,4.36,Speed Boat approved capacity information is available.
+offline-7,1,Kayak me kitne log baith sakte hain?,hinglish,service_topic,answer_service_knowledge,kayaking,capacity,False,"('capacity',)",[],answer_service_knowledge,True,[],False,0,3.08,Kayak approved capacity information is available.
+offline-8,1,Jet Ski kitni der ki hai?,hinglish,service_topic,answer_service_knowledge,jet_ski_ride,duration,False,"('duration',)",[],answer_service_knowledge,True,[],False,0,2.95,Jet Ski approved duration information is available.
+offline-9,1,Staycation me kya included hai?,hinglish,service_topic,answer_service_knowledge,staycation_combo,inclusions,False,"('inclusions',)",[],answer_service_knowledge,True,[],False,0,2.5,Staycation Combo approved inclusions information is available.
+offline-10,1,Swimming zaruri hai?,hinglish,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.69,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-11,1,Tell me about Jet Ski.,en,service_overview,answer_service_knowledge,jet_ski_ride,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,2.94,Jet Ski approved overview information is available.
+offline-12,1,Can you give more details about it?,en,contextual_service_followup,answer_service_knowledge,jet_ski_ride,more_details,True,"('more details',)",[],answer_service_knowledge,True,[],False,0,3.35,Jet Ski approved more_details information is available.
+offline-13,1,What is the price of Jet Ski?,en,pricing,handover_to_sales,,,False,(),[],handover_to_sales,True,[],False,0,2.77,Please contact the Entartica sales team for assistance.
+offline-14,1,I want to book Speed Boat.,en,booking,handover_to_sales,,,False,(),[],handover_to_sales,True,[],False,0,2.37,Please contact the Entartica sales team for assistance.
+offline-15,1,Is Jet Ski available tomorrow?,en,availability,handover_to_sales,,,False,(),[],handover_to_sales,True,[],False,0,2.27,Please contact the Entartica sales team for assistance.
+offline-16,1,What is kayaking?,en,service_overview,answer_service_knowledge,kayaking,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,2.43,Kayak approved overview information is available.
+offline-17,1,What exact engine model does your Speed Boat use?,en,service_overview,answer_service_knowledge,speed_boat_ride,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,2.91,Speed Boat approved overview information is available.
+offline-18,1,I want the Entartica Raipur address.,en,location,answer_location,,location,False,(),[],answer_location,True,[],False,0,1.95,The exact information is not confirmed. Please contact the Entartica team for verification.
+offline-19,1,How can I reach Entartica Raipur?,en,unknown_entartica_fact,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.13,The exact detail is not confirmed in the approved information currently available to the chatbot. Please contact the Entartica team for verification.
+offline-20,1,What else do you offer?,en,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.51,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-21,1,Speed Boat ke bare mein information do.,en,service_overview,answer_service_knowledge,speed_boat_ride,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,2.05,Speed Boat approved overview information is available.
+offline-22,1,What safety equipment is provided?,en,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.54,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-23,1,Who can participate?,en,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.81,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-24,1,How can I make payment?,en,payment,handover_to_sales,,,False,(),[],handover_to_sales,True,[],False,0,6.52,Please contact the Entartica sales team for assistance.
+offline-25,1,I want to cancel my booking.,en,booking,handover_to_sales,,,False,(),[],handover_to_sales,True,[],False,0,6.53,Please contact the Entartica sales team for assistance.
+offline-26,1,What is a lake?,en,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,4.68,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-27,1,What should people generally wear for water activities?,en,service_catalogue,answer_catalogue,,,False,(),[],answer_catalogue,True,[],False,0,2.21,"Raipur mein available experiences:
+• Staycation Combo
+• Daycation Package
+• Pontoon Boat
+• Kayak
+• Speed Boat
+• Aqua Cycle
+• Jet Ski
+• Water Bike
+• Inflatable Sofa Ride
+• Bumper Boat
+• Kids' Paddle Boat
+• Pontoon Celebration
+• Floating Gazebo
+• Jetty Gazebo
+• Houseboat Celebration
+• Party Boat Celebration"
+offline-28,1,Who is operating Jet Ski today?,en,service_overview,answer_service_knowledge,jet_ski_ride,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,2.0,Jet Ski approved overview information is available.
+offline-29,1,What is the current fuel level?,en,general_question,answer_general_openai,,,False,(),[],answer_general_openai,True,[],False,0,2.41,"Generally, I can help with information about water activities and venues. Please tell me what you would like to know."
+offline-30,1,Can you provide more details about Jet Ski?,en,service_overview,answer_service_knowledge,jet_ski_ride,overview,False,"('overview',)",[],answer_service_knowledge,True,[],False,0,1.9,Jet Ski approved overview information is available.

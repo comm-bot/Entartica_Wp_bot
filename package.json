@@ -1,0 +1,25 @@
+{
+  "name": "entartica_whatsapp_chat_bot",
+  "version": "1.0.0",
+  "description": "The Phase 1 backend foundation for the Entartica Sea World WhatsApp chatbot.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "eval:chatbot": "promptfoo eval",
+    "eval:view": "promptfoo view"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/comm-bot/Entartica_Wp_bot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/comm-bot/Entartica_Wp_bot/issues"
+  },
+  "homepage": "https://github.com/comm-bot/Entartica_Wp_bot#readme"
+}

@@ -1,0 +1,70 @@
+﻿- vars: {message: 'What are the rides?'}
+  assert: [{type: contains, value: 'route=answer_catalogue'}]
+- vars: {message: 'What is the location of Raipur?'}
+  assert: [{type: contains, value: 'route=answer_location'}]
+- vars: {message: 'What is the price of Jet Ski?'}
+  assert: [{type: contains, value: 'route=handover_to_sales'}]
+- vars: {message: 'Tell me about Jet Ski.'}
+  assert: [{type: contains, value: 'route=answer_service_knowledge'}]
+- vars: {message: 'What is kayaking?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'Address of Raipur.'}
+  assert: [{type: contains, value: 'route=answer_location'}]
+- vars: {message: 'Raipur kaha hai?'}
+  assert: [{type: contains, value: 'route=answer_location'}]
+- vars: {message: 'How can I reach Entartica Raipur?'}
+  assert: [{type: contains, value: 'route=answer_location'}]
+- vars: {message: 'Can you provide other rides?'}
+  assert: [{type: contains, value: 'route=answer_catalogue'}]
+- vars: {message: 'What else do you have?'}
+  assert: [{type: contains, value: 'route=answer_catalogue'}]
+- vars: {message: 'Aur kaun si rides hain?'}
+  assert: [{type: contains, value: 'route=answer_catalogue'}]
+- vars: {message: 'Staycation hota kya hai?'}
+  assert: [{type: contains, value: 'intent=service_overview'}]
+- vars: {message: 'Staycation ke bare mein batao.'}
+  assert: [{type: contains, value: 'intent=service_overview'}]
+- vars: {message: 'Info of Kayaking.'}
+  assert: [{type: contains, value: 'intent=service_overview'}]
+- vars: {message: 'Speed Boat capacity.'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'Hat is the capacity of speed baot.'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'Kayaking capacity.'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'Jet Ski kitni der ki hai?'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'Staycation me kya included hai?'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'Swimming zaruri hai?'}
+  assert: [{type: contains, value: 'intent=general_question'}]
+- vars: {message: 'Safety question.'}
+  assert: [{type: contains, value: 'intent=general_question'}]
+- vars: {message: 'What are the operating hours?'}
+  assert: [{type: contains, value: 'intent=general_question'}]
+- vars: {message: 'Tell me more.'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'Can you give more details about it?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'Isme kya included hai?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'How long is it?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'I want to book Speed Boat.'}
+  assert: [{type: contains, value: 'route=handover_to_sales'}]
+- vars: {message: 'Is Jet Ski available tomorrow?'}
+  assert: [{type: contains, value: 'route=handover_to_sales'}]
+- vars: {message: 'I want to make a payment.'}
+  assert: [{type: contains, value: 'route=handover_to_sales'}]
+- vars: {message: 'I want to cancel my booking.'}
+  assert: [{type: contains, value: 'route=handover_to_sales'}]
+- vars: {message: 'What is a lake?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'What should people generally wear for water activities?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'What exact engine model does your Speed Boat use?'}
+  assert: [{type: contains, value: 'intent=service_topic'}]
+- vars: {message: 'What is the exact current operator roster?'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]
+- vars: {message: 'Give unconfirmed technical specification.'}
+  assert: [{type: contains, value: 'route=answer_general_openai'}]

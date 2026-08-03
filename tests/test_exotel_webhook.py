@@ -1,11 +1,15 @@
-"""Tests for the inbound Exotel webhook."""
+"""Tests for the promptly acknowledged, background-only inbound webhook."""
 
+import asyncio
 import hashlib
 import hmac
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from starlette.background import BackgroundTasks
+from starlette.requests import Request
 
 from app.api import exotel_webhook
 from app.main import app
@@ -38,6 +42,11 @@ def _settings(*, signatures_enabled: bool = False):
         exotel_account_sid="account-1",
         exotel_api_token=SecretStr("test-token"),
         exotel_signature_validation_enabled=signatures_enabled,
+        raipur_inbound_orchestrator_enabled=False,
+        raipur_draft_creation_enabled=False,
+        raipur_automatic_reply_enabled=False,
+        exotel_outbound_enabled=False,
+        raipur_approved_draft_send_enabled=False,
     )
 
 
@@ -59,7 +68,7 @@ def _payload() -> dict:
 
 
 def test_webhook_acknowledges_valid_payload(monkeypatch) -> None:
-    """A valid mocked payload is acknowledged after persistence."""
+    """A valid mocked payload is acknowledged while persistence runs later."""
 
     monkeypatch.setattr(exotel_webhook, "get_settings", lambda: _settings())
     monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", SuccessfulService)
@@ -115,15 +124,15 @@ def test_webhook_rejects_invalid_signature(monkeypatch) -> None:
     assert response.status_code == 401
 
 
-def test_webhook_hides_persistence_error_details(monkeypatch) -> None:
-    """Storage failures do not expose message content or internal details."""
+def test_webhook_background_persistence_failure_still_acknowledges(monkeypatch) -> None:
+    """Later storage failures never change Exotel's already-safe acknowledgement."""
 
     monkeypatch.setattr(exotel_webhook, "get_settings", lambda: _settings())
     monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", FailingService)
 
     response = TestClient(app).post("/webhooks/exotel/inbound", json=_payload())
 
-    assert response.status_code == 500
+    assert response.status_code == 200
     assert "Hello" not in response.text
     assert "database unavailable" not in response.text
 
@@ -149,3 +158,101 @@ def test_webhook_ignores_unsupported_callback_type(monkeypatch) -> None:
     response = TestClient(app).post("/webhooks/exotel/inbound", json=payload)
 
     assert response.status_code == 200
+
+
+def test_valid_request_schedules_slow_processing_without_awaiting_it(monkeypatch) -> None:
+    """The route returns before a potentially slow background task starts."""
+
+    scheduled: list[object] = []
+
+    async def slow_background(*_args):
+        scheduled.append("started")
+
+    monkeypatch.setattr(exotel_webhook, "get_settings", lambda: _settings())
+    monkeypatch.setattr(exotel_webhook, "process_inbound_messages_background", slow_background)
+    body = json.dumps(_payload()).encode()
+    called = False
+
+    async def receive():
+        nonlocal called
+        if called:
+            return {"type": "http.disconnect"}
+        called = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request({"type": "http", "method": "POST", "path": "/webhooks/exotel/inbound", "headers": []}, receive)
+    tasks = BackgroundTasks()
+    response = asyncio.run(exotel_webhook.receive_inbound_message(request, tasks))
+
+    assert response.status_code == 200
+    assert len(tasks.tasks) == 1
+    assert scheduled == []
+
+
+def test_duplicate_background_processing_skips_orchestration(monkeypatch) -> None:
+    class Service:
+        def __init__(self): self.calls = 0
+        def process(self, _message):
+            self.calls += 1
+            return InboundMessageResult(self.calls > 1, {"id": "customer"}, {"id": "conversation"}, {"id": "inbound"})
+
+    class Orchestrator:
+        def __init__(self): self.calls = 0
+        def process(self, *_args, **_kwargs): self.calls += 1; return SimpleNamespace(action="answer_information", reason_code="approved_knowledge")
+
+    service, orchestrator = Service(), Orchestrator()
+    configured = _settings(); configured.raipur_inbound_orchestrator_enabled = True
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", lambda: service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: object())
+    monkeypatch.setattr(exotel_webhook, "OutboundDraftRepository", lambda _client: object())
+    monkeypatch.setattr(exotel_webhook, "create_draft_after_orchestration", lambda **_kwargs: SimpleNamespace(draft_saved=False, reason_code="disabled"))
+    message = exotel_webhook.normalize_exotel_payload(_payload())[0]
+
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+
+    assert service.calls == 2 and orchestrator.calls == 1
+
+
+def test_background_automatic_reply_uses_existing_sender_only_when_enabled(monkeypatch) -> None:
+    class Service:
+        def process(self, _message): return InboundMessageResult(False, {"id": "customer"}, {"id": "conversation"}, {"id": "inbound"})
+
+    orchestration = SimpleNamespace(
+        action="answer_information", reason_code="approved_knowledge", response_valid=True,
+        human_handover_required=False, draft_text="Grounded fact.", detected_intent="location",
+            safe_metadata={"source_filename": "safe.docx", "customer_response_sanitized": True, "response_basis": "active_rag"},
+    )
+
+    class Orchestrator:
+        def process(self, *_args, **_kwargs): return orchestration
+
+    class Repository:
+        def __init__(self): self.row = {"id": "draft", "draft_status": "pending_review", "sent_at": None, "external_message_id": None}
+        def find_draft_for_inbound_message(self, _inbound_id): return self.row
+        def approve_draft(self, _draft_id): self.row["draft_status"] = "approved"; return True
+
+    class Sender:
+        def __init__(self): self.calls = 0
+        async def send(self, *_args, **_kwargs): self.calls += 1; return SimpleNamespace(attempted=True, reason="completed")
+
+    repository, sender = Repository(), Sender()
+    configured = _settings(); configured.raipur_inbound_orchestrator_enabled = True; configured.raipur_draft_creation_enabled = True
+    configured.raipur_automatic_reply_enabled = True; configured.exotel_outbound_enabled = True; configured.raipur_approved_draft_send_enabled = True
+    configured.raipur_automatic_reply_intents = ("location",)
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: object())
+    monkeypatch.setattr(exotel_webhook, "OutboundDraftRepository", lambda _client: repository)
+    monkeypatch.setattr(exotel_webhook, "create_draft_after_orchestration", lambda **_kwargs: SimpleNamespace(draft_saved=True, reason_code="draft_created"))
+    monkeypatch.setattr(exotel_webhook, "get_raipur_draft_sender", lambda _repository, _settings: sender)
+    message = exotel_webhook.normalize_exotel_payload(_payload())[0]
+
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+    assert sender.calls == 1
+
+    configured.raipur_automatic_reply_enabled = False
+    repository.row.update(draft_status="pending_review", sent_at=None, external_message_id=None)
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+    assert sender.calls == 1

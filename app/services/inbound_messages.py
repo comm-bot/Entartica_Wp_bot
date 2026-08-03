@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import logging
 import re
+from typing import Any
 
 from supabase import Client
 
@@ -10,6 +11,7 @@ from app.repositories.conversations import ConversationRepository
 from app.repositories.customers import CustomerRepository
 from app.repositories.messages import DuplicateMessageError, MessageRepository
 from app.schemas.exotel_webhook import NormalizedInboundMessage
+from app.services.latency import latency_stage
 
 
 # Uvicorn configures this logger for normal server-console output.
@@ -49,6 +51,9 @@ class InboundMessageResult:
     """Outcome of persisting an inbound message."""
 
     duplicate: bool
+    customer: dict[str, Any] | None = None
+    conversation: dict[str, Any] | None = None
+    inbound_message: dict[str, Any] | None = None
 
 
 class InboundMessageService:
@@ -63,28 +68,31 @@ class InboundMessageService:
         """Find or create the customer and conversation, then store the message."""
 
         try:
-            customer = self._customers.get_or_create(
-                message.customer_whatsapp_number, message.profile_name
-            )
+            with latency_stage("customer_lookup"):
+                customer = self._customers.get_or_create(
+                    message.customer_whatsapp_number, message.profile_name
+                )
         except Exception as error:
             _log_repository_failure("customer_get_or_create", error)
             raise
 
         try:
-            conversation = self._conversations.get_or_create_open(customer["id"])
+            with latency_stage("conversation_load"):
+                conversation = self._conversations.get_or_create_open(customer["id"])
         except Exception as error:
             _log_repository_failure("conversation_get_or_create_open", error)
             raise
 
         try:
-            self._messages.store_inbound(
-                message,
-                customer_id=customer["id"],
-                conversation_id=conversation["id"],
-            )
+            with latency_stage("duplicate_check"), latency_stage("draft_or_message_persistence"):
+                stored = self._messages.store_inbound(
+                    message,
+                    customer_id=customer["id"],
+                    conversation_id=conversation["id"],
+                )
         except DuplicateMessageError:
-            return InboundMessageResult(duplicate=True)
+            return InboundMessageResult(True, customer, conversation)
         except Exception as error:
             _log_repository_failure("message_store_inbound", error)
             raise
-        return InboundMessageResult(duplicate=False)
+        return InboundMessageResult(False, customer, conversation, stored)

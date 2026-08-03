@@ -1,0 +1,35 @@
+{
+
+    "status_callback": "https://01k1jshhzc8dwfdgf24s038r2300-c2b85b35427c8de2bfd9.requestinspector.com",
+   
+    "whatsapp": {
+   
+      "messages": [
+   
+        {
+   
+          "from": "+917948502810",
+   
+          "to": "+918200990088",
+   
+          "content": {
+   
+            "type": "text",
+   
+            "text": {
+   
+              "body": "Hi ?\nThank you for reaching out. Currently, we do not provide support over WhatsApp chat. However, you can use this number to reach us via WhatsApp voice call for any support-related queries. For all other assistance, please follow the regular support channel — i.e., our ticketing system. We appreciate your understanding.\n\nExotel Support Team"
+   
+            }
+   
+          }
+   
+        }
+   
+      ]
+   
+    }
+   
+   }
+   
+   

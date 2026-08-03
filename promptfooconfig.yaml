@@ -1,0 +1,6 @@
+description: Entartica Raipur feature-flagged LangGraph evaluation
+providers:
+  - id: python:evals/providers/chatbot_provider.py
+prompts:
+  - '{{message}}'
+tests: file://evals/entartica_raipur_cases.yaml
