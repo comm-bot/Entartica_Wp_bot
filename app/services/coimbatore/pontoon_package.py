@@ -19,7 +19,7 @@ logger = logging.getLogger("uvicorn.error")
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG_FILE = ROOT / "config" / "Coimbatore" / "coimbatore_pontoon_standard.yaml"
-MASTER_KB = ROOT / "documents" / "coimbatore" / "active" / "COIMBATORE_KNOWLEDGE_BASE.md"
+MASTER_KB = ROOT / "documents" / "Coimbatore" / "active" / "COIMBATORE_KNOWLEDGE_BASE.md"
 STANDARD_PACKAGE_ID = "coimbatore_pontoon_standard"
 COUPLE_PACKAGE_ID = "coimbatore_pontoon_couple_romance"
 STANDARD_PACKAGE_IMAGE_URL = (

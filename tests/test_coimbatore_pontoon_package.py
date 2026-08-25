@@ -4,10 +4,18 @@ import pytest
 
 from app.services.booking_enquiries import BookingDetails
 from app.services.coimbatore.pontoon_package import (
+    MASTER_KB,
     action_id, is_package_request, load_couple_package, load_standard_package, package_request_id,
     render_package, resolve_s3_image_url, resolve_standard_package_pricing,
 )
 from app.services.raipur.response_models import ConversationContext
+
+
+def test_master_knowledge_path_matches_tracked_linux_casing():
+    assert MASTER_KB.parts[-4:] == (
+        "documents", "Coimbatore", "active", "COIMBATORE_KNOWLEDGE_BASE.md",
+    )
+    assert MASTER_KB.is_file()
 
 
 def test_approved_kb_and_yaml_load_without_raipur_facts():
