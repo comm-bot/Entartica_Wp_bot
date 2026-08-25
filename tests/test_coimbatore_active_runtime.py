@@ -90,6 +90,47 @@ def test_first_message_fields_are_parsed_and_persisted():
     assert eligible_for_automatic_reply(automatic_settings, result, draft) == (True, "eligible")
 
 
+@pytest.mark.parametrize(
+    "message",
+    ["7 and 29/08/2026", "7, 29/08/2026", "7 . 29/08/2026"],
+)
+def test_combined_guest_and_date_accept_common_customer_separators(message):
+    service, _contexts = orchestrator()
+    result = run(service, message)
+    assert result.context.details.total_guests == 7
+    assert result.context.details.preferred_date == date(2026, 8, 29)
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "₹7,500" in result.draft_text
+    assert "₹6,375" in result.draft_text
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["7 people, date is not decided", "7 guests and we are not sure about the date", "7 people, no date yet"],
+)
+def test_undecided_date_still_presents_guest_priced_package(message):
+    service, _contexts = orchestrator()
+    result = run(service, message)
+    assert result.context.details.total_guests == 7
+    assert result.context.details.preferred_date is None
+    assert result.context.form_values["date_undecided"] is True
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "Event Date:" not in result.draft_text
+    assert "₹7,500" in result.draft_text
+    assert "₹6,375" in result.draft_text
+
+
+def test_book_now_after_undecided_date_requests_date_before_payment():
+    service, _contexts = orchestrator()
+    offered = run(service, "7 guests, still not decided the date")
+    confirm_package(service, offered)
+    booking = run(service, "Book Now")
+    assert booking.reason_code == "coimbatore_booking_date_required"
+    assert booking.context.pending_field == "preferred_date"
+    assert booking.safe_metadata["booking_allowed"] is False
+    assert "share your celebration date" in booking.draft_text
+
+
 def test_existing_state_survives_and_corrections_preserve_other_field():
     service, _contexts = orchestrator()
     first = run(service, "30 August, 5 people")

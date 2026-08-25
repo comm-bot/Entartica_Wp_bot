@@ -164,6 +164,18 @@ def test_sender_gates_and_local_validation_never_call_provider():
         assert result.reason == "local_validation_failure" and not result.attempted and not exotel.calls
 
 
+def test_production_sender_accepts_any_normalized_customer_recipient():
+    repository, exotel = Repo(row()), Exotel()
+    configured = settings(app_env="production", raipur_outbound_test_recipients=())
+    result = asyncio.run(
+        RaipurDraftSender(repository, configured, exotel).send(
+            "draft-1", "+919876543210", confirmed=True,
+        )
+    )
+    assert result.attempted and result.accepted and result.sid_recorded
+    assert exotel.calls[0][0] == "+919876543210"
+
+
 def test_accepted_response_completes_matching_claim_without_regenerating_text():
     repository, exotel = Repo(row()), Exotel()
     result = _send(repository, exotel)

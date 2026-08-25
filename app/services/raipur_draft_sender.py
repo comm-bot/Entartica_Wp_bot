@@ -33,7 +33,11 @@ class RaipurDraftSender:
             return ApprovedDraftSendResult(False, False, False, False, "confirmation_required")
         if not self._settings.exotel_outbound_enabled or not self._settings.raipur_approved_draft_send_enabled:
             return ApprovedDraftSendResult(False, False, False, False, "send_feature_disabled")
-        if to not in self._settings.raipur_outbound_test_recipients:
+        # The allowlist is a development/staging guard. In production the
+        # recipient is the normalized customer number from the inbound
+        # webhook, while EXOTEL_WHATSAPP_FROM remains the business sender.
+        environment = str(getattr(self._settings, "app_env", "development")).strip().casefold()
+        if environment != "production" and to not in self._settings.raipur_outbound_test_recipients:
             return ApprovedDraftSendResult(False, False, False, False, "recipient_not_allowlisted")
 
         draft = await asyncio.to_thread(self._repo.get_draft_by_id, draft_id)

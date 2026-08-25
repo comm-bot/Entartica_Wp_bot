@@ -17,7 +17,12 @@ from app.services.coimbatore.customer_understanding import (
 from app.services.coimbatore.response_composer import (
     CoimbatoreResponseBrief, build_coimbatore_response_composer,
 )
-from app.services.coimbatore.pontoon_qualification import FIRST_MESSAGE, has_qualification_update, qualify
+from app.services.coimbatore.pontoon_qualification import (
+    FIRST_MESSAGE,
+    has_qualification_update,
+    package_qualification_ready,
+    qualify,
+)
 from app.services.coimbatore.pontoon_package import (
     COUPLE_PACKAGE_ID, STANDARD_PACKAGE_ID, action_id, action_message, handle_action,
     is_package_request, load_package, package_presented, package_request_id, render_package,
@@ -227,7 +232,7 @@ class CoimbatoreInboundOrchestrator:
             location = replace(location, detected_intent="location")
             return self._finalize(location, customer_id, conversation_id, fresh, source_message_id)
         selected_action = action_id(content)
-        if selected_action and active.details.preferred_date is not None and active.details.total_guests is not None:
+        if selected_action and package_qualification_ready(active):
             result = self._handle_package_action(selected_action, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         if active.sales_stage == SalesStage.INTERESTED:
@@ -272,7 +277,7 @@ class CoimbatoreInboundOrchestrator:
                 )
             date_extracted = qualified.context.details.preferred_date != active.details.preferred_date
             guest_extracted = qualified.context.details.total_guests != active.details.total_guests
-            complete = qualified.context.details.preferred_date is not None and qualified.context.details.total_guests is not None
+            complete = package_qualification_ready(qualified.context)
             logger.info(
                 "understanding_result mode=deterministic_qualification date_extracted=%s guest_extracted=%s",
                 date_extracted, guest_extracted,
@@ -282,10 +287,7 @@ class CoimbatoreInboundOrchestrator:
                 qualified.context.details.preferred_date is not None,
                 qualified.context.details.total_guests is not None, complete,
             )
-            if (
-                qualified.context.details.preferred_date is not None
-                and qualified.context.details.total_guests is not None
-            ):
+            if complete:
                 current = (qualified.context.form_values or {}).get("active_package_id")
                 selected = COUPLE_PACKAGE_ID if current == COUPLE_PACKAGE_ID else STANDARD_PACKAGE_ID
                 values = dict(qualified.context.form_values or {}); values["active_package_id"] = selected
@@ -312,7 +314,7 @@ class CoimbatoreInboundOrchestrator:
         selected_action = action_id(content)
         explicit_package_request = is_package_request(content)
         was_presented = package_presented(active)
-        if selected_action and active.details.preferred_date is not None and active.details.total_guests is not None:
+        if selected_action and package_qualification_ready(active):
             result = self._handle_package_action(selected_action, active)
         elif active.sales_stage == SalesStage.INTERESTED:
             result = _collect_booking_details(content, active)
@@ -500,7 +502,7 @@ class CoimbatoreInboundOrchestrator:
                 text, context,
                 timezone_name=getattr(self._settings, "app_timezone", "Asia/Kolkata"),
             )
-            if qualified.context.details.preferred_date is not None and qualified.context.details.total_guests is not None:
+            if package_qualification_ready(qualified.context):
                 return self._package_result(
                     replace(qualified.context, pending_field=None, sales_stage=SalesStage.QUALIFIED),
                     STANDARD_PACKAGE_ID,

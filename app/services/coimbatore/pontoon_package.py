@@ -374,6 +374,18 @@ def handle_action(
             ),
         })
     elif action == "coimbatore_pontoon_book_standard":
+        if planned is None:
+            return ConversationResult(
+                action="answer_information",
+                draft_text="Sure 😊 Please share your celebration date before we continue with booking.",
+                reason_code="coimbatore_booking_date_required",
+                detected_intent="booking",
+                detected_location="coimbatore",
+                response_language="en",
+                human_handover_required=False,
+                context=replace(context, pending_field="preferred_date"),
+                safe_metadata={**metadata, "booking_allowed": False, "date_required": True},
+            )
         values = dict(context.form_values or {})
         package_id = values.get("active_package_id")
         if package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}:
