@@ -172,6 +172,33 @@ def test_existing_state_survives_and_corrections_preserve_other_field():
     assert changed_date.context.details.total_guests == 8
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I want to know about the package",
+        "I want to celebrate",
+        "celebration package",
+        "planning a celebration",
+        "package information",
+    ],
+)
+def test_returning_customer_package_phrases_resend_saved_appropriate_package(message):
+    first, contexts = orchestrator()
+    offered = run(first, "7 people and 5 september")
+    confirm_package(first, offered)
+
+    returning, _unused = orchestrator()
+    returning._contexts = contexts
+    result = run(returning, message)
+
+    assert result.context.details.total_guests == 7
+    assert result.context.details.preferred_date == date(2026, 9, 5)
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "Guests: 7" in result.draft_text
+    assert "₹7,500" in result.draft_text
+    assert "₹6,375" in result.draft_text
+
+
 def test_live_factory_never_constructs_raipur_or_knowledge(monkeypatch):
     client = object()
     settings = SimpleNamespace(active_location="coimbatore")

@@ -289,6 +289,18 @@ def package_request_id(text: object) -> str | None:
         return COUPLE_PACKAGE_ID
     if re.search(r"\b(?:5999\s*package|standard(?: pontoon)?\s*package|send\s+(?:me\s+)?standard\s*package|show\s+(?:me\s+)?standard\s*package)\b", normalized):
         return STANDARD_PACKAGE_ID
+    if re.search(
+        r"\b(?:"
+        r"i\s+(?:want|would\s+like)\s+to\s+(?:know\s+about\s+(?:the\s+)?package|celebrate)|"
+        r"(?:tell|show|send|give)\s+(?:me\s+)?(?:about\s+)?(?:the\s+)?package|"
+        r"(?:pontoon\s+)?celebration\s+package|"
+        r"(?:planning|plan)\s+(?:a\s+)?celebration|"
+        r"package\s+(?:information|info|offer)|"
+        r"celebration\s+details"
+        r")\b",
+        normalized,
+    ):
+        return "choice"
     if re.fullmatch(r"(?:please\s+)?(?:package|send (?:me )?(?:the )?package(?: again)?|package details|send full details(?: plz| please)?|what is your package|what package do you have)\s*[?.!]*", normalized):
         return "choice"
     return None

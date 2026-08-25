@@ -257,8 +257,14 @@ class CoimbatoreInboundOrchestrator:
             )
             if requested_package == "choice":
                 current = (active.form_values or {}).get("active_package_id")
-                requested_package = current if current in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID} else None
-            result = self._package_result(package_context, requested_package) if requested_package else _package_choice_result(package_context)
+                requested_package = (
+                    current if current in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}
+                    else STANDARD_PACKAGE_ID
+                )
+            values = dict(package_context.form_values or {})
+            values["active_package_id"] = requested_package
+            package_context = replace(package_context, form_values=values)
+            result = self._package_result(package_context, requested_package)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         if has_qualification_update(content, active):
             logger.info(
