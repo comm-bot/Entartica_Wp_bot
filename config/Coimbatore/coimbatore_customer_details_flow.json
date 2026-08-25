@@ -1,0 +1,56 @@
+{
+  "version": "7.1",
+  "screens": [
+    {
+      "id": "CUSTOMER_DETAILS",
+      "title": "Complete Details",
+      "terminal": true,
+      "success": true,
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "Let's get to know you 😊"
+          },
+          {
+            "type": "TextBody",
+            "text": "This will help us assist you better."
+          },
+          {
+            "type": "Form",
+            "name": "customer_details_form",
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "full_name",
+                "label": "Full Name",
+                "input-type": "text",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "email",
+                "label": "Email Address",
+                "input-type": "email",
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Continue",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "full_name": "${form.full_name}",
+                    "email": "${form.email}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

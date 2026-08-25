@@ -1,0 +1,19 @@
+{
+  "base_model": "gpt-4.1-mini-2025-04-14",
+  "suffix": "chiki-sales-v1",
+  "production_model_changed": false,
+  "production_ft_enabled": false,
+  "holdout_uploaded": false,
+  "holdout_sha256": "8ea7c4490c0d50f3a4f25d736fb7d2c1badbfc747a7ceb9045c6602a474ee0a5",
+  "train_sha256": "782d849576c0a71e38f1fa547d46fbd448c8c2101b5aaaa9af6bdca6397575e1",
+  "validation_sha256": "0ae329eb66c013a7ec62dc99417c74fd488ec7e2ce87f0e8e05ab1d88b70fb99",
+  "hyperparameters": "platform defaults",
+  "training_file_id": "file-R1qkabdoHQYEZLK59br6qA",
+  "validation_file_id": "file-Wmzb6nXRSQQSwECDQ4rcZp",
+  "organization_job_creation_eligibility": false,
+  "job_created": false,
+  "status": "rejected",
+  "error_status": 403,
+  "error_code": "training_not_available",
+  "error_message": "OpenAI is winding down the fine-tuning platform and your organization is no longer able to create new fine-tuning training jobs."
+}

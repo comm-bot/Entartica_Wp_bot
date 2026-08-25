@@ -29,3 +29,21 @@ def test_repository_failure_is_safe_and_external_services_untouched():
  assert result.reason_code=='draft_repository_unavailable' and not result.draft_saved
  assert repo.exotel_called is False and repo.whatsapp_sent is False and repo.openai_called is False
  assert repo.network_calls==0 and repo.database_writes==0 and repo.reservations_created==0 and repo.capacity_changes==0 and repo.payment_actions==0 and repo.final_bookings_confirmed==0
+
+def test_interactive_metadata_enters_the_same_durable_draft_pipeline():
+ repo=FakeOutboundDraftRepository();interactive={"kind":"list","body":"options","fallback_text":"options","button_label":"Choose Celebration","options":[]}
+ created=call(repo,result=orchestration(safe_metadata={"interactive_message":interactive}))
+ assert created.draft_saved
+ draft=repo.get_draft_by_id('fake-draft-1')
+ assert draft["message_type"]=="interactive"
+ assert draft["draft_metadata"]["interactive_message"]==interactive
+
+def test_template_metadata_creates_one_template_draft_without_media_or_interactive_drafts():
+ repo=FakeOutboundDraftRepository();template={"name":"approved-template","language":"en","header_image_url":"https://example.test/pontoon.jpg","flow_id":"flow-1","flow_cta":"Share Event Details","service_code":"pontoon_celebration","package_source_file":"active/services/pontoon_celebration.md","approved_package":True}
+ created=call(repo,result=orchestration(safe_metadata={"template_message":template}))
+ assert created.draft_saved and repo.drafts_created==1
+ draft=repo.get_draft_by_id('fake-draft-1')
+ assert draft["message_type"]=="template"
+ assert draft["draft_metadata"]["template_message"]==template
+ assert "media_message" not in draft["draft_metadata"]
+ assert "interactive_message" not in draft["draft_metadata"]

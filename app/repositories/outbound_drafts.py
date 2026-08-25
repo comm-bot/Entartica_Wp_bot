@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.schemas.outbound_drafts import DraftCreateRequest
+from app.services.latency import latency_counter
 
 
 _DRAFT_STATUSES = {"pending_review", "approved", "rejected", "sent", "failed"}
@@ -38,6 +39,7 @@ class OutboundDraftRepository:
 
     def find_draft_for_inbound_message(self, inbound_id: str) -> dict[str, Any] | None:
         try:
+            latency_counter("supabase_reads")
             response = (
                 self._client.table("messages")
                 .select("*")
@@ -51,6 +53,67 @@ class OutboundDraftRepository:
         except Exception:
             return None
 
+    def find_booking_confirmation_draft(self, booking_ref: str) -> dict[str, Any] | None:
+        try:
+            response = (self._client.table("messages").select("*")
+                .eq("generated_by", "booking_confirmation")
+                .eq("draft_metadata->>booking_ref", booking_ref)
+                .order("created_at", desc=True).limit(1).maybe_single().execute())
+            return _response_row(response)
+        except Exception:
+            return None
+
+    def create_booking_confirmation_draft(self, *, booking: dict[str, Any], content: str,
+                                          document_url: str, filename: str) -> tuple[dict[str, Any], bool]:
+        existing = self.find_booking_confirmation_draft(str(booking["booking_ref"]))
+        # A provider_failed claim is a definite rejection and is safe to retry as
+        # a new durable attempt. Ambiguous/reconciliation claims must be reused
+        # and blocked so that a possibly accepted document is never duplicated.
+        if existing and existing.get("send_attempt_state") != "provider_failed":
+            return existing, False
+        record = {
+            "customer_id":booking["customer_id"], "conversation_id":booking["conversation_id"],
+            "related_inbound_message_id":None, "direction":"outbound", "message_type":"document",
+            "content":content, "delivery_status":None, "draft_status":"pending_review",
+            "generated_by":"booking_confirmation",
+            "draft_metadata":{"language":"en", "action":"booking_confirmation",
+                "human_handover_required":False, "response_valid":True,
+                "booking_ref":booking["booking_ref"],
+                "retry_of_draft_id":existing.get("id") if existing else None,
+                "document_message":{"type":"document", "url":document_url,
+                    "caption":content, "filename":filename}},
+        }
+        response = self._client.table("messages").insert(record).execute()
+        return _response_row(response) or {}, True
+
+    def create_customer_details_continuation_draft(
+        self, *, customer_id: str, conversation_id: str, form_id: str, content: str,
+    ) -> tuple[dict[str, Any], bool]:
+        try:
+            existing = _response_row(
+                self._client.table("messages").select("*")
+                .eq("generated_by", "coimbatore_customer_details")
+                .eq("draft_metadata->>form_id", form_id)
+                .order("created_at", desc=True).limit(1).maybe_single().execute()
+            )
+        except Exception:
+            existing = None
+        if existing:
+            return existing, False
+        record = {
+            "customer_id": customer_id, "conversation_id": conversation_id,
+            "related_inbound_message_id": None, "direction": "outbound",
+            "message_type": "text", "content": content, "delivery_status": None,
+            "draft_status": "pending_review", "generated_by": "coimbatore_customer_details",
+            "draft_metadata": {
+                "language": "en", "action": "customer_details_completed",
+                "human_handover_required": False, "response_valid": True,
+                "form_id": form_id,
+            },
+        }
+        response = self._client.table("messages").insert(record).execute()
+        return _response_row(response) or {}, True
+
     def create_pending_draft(self, request: DraftCreateRequest) -> tuple[dict[str, Any], bool]:
         existing = self.find_draft_for_inbound_message(request.related_inbound_message_id)
         if existing:
@@ -60,7 +123,14 @@ class OutboundDraftRepository:
             "conversation_id": request.conversation_id,
             "related_inbound_message_id": request.related_inbound_message_id,
             "direction": "outbound",
-            "message_type": "text",
+            "message_type": (
+                "template" if request.template_message
+                else "document" if (request.package_metadata or {}).get("document_message")
+                else "interactive" if request.interactive_message and request.interactive_message.get("header_image_url")
+                else "image" if request.media_message
+                else "interactive" if request.interactive_message
+                else "text"
+            ),
             "content": request.content,
             # Draft lifecycle is represented by `draft_status`; this is not an outbound delivery.
             "delivery_status": None,
@@ -72,9 +142,14 @@ class OutboundDraftRepository:
                 "template_key": request.template_key,
                 "human_handover_required": request.human_handover_required,
                 "response_valid": request.response_valid,
+                "interactive_message": request.interactive_message,
+                "media_message": request.media_message,
+                "template_message": request.template_message,
+                **(request.package_metadata or {}),
             },
         }
         try:
+            latency_counter("supabase_writes")
             response = self._client.table("messages").insert(record).execute()
             return _response_row(response) or {}, True
         except Exception as error:
@@ -83,6 +158,7 @@ class OutboundDraftRepository:
 
     def get_draft_by_id(self, draft_id: str) -> dict[str, Any] | None:
         try:
+            latency_counter("supabase_reads")
             response = (
                 self._client.table("messages")
                 .select("*")
@@ -143,6 +219,7 @@ class OutboundDraftRepository:
         """Atomically acquire the only active provider-send claim for this draft."""
         try:
             now = datetime.now(UTC).isoformat()
+            latency_counter("supabase_writes")
             response = (self._client.table("messages").update({"send_claim_token": claim_token, "send_claimed_at": now, "send_attempt_state": "claimed"})
                 .eq("id", draft_id).eq("draft_status", "approved").is_("sent_at", "null")
                 .is_("external_message_id", "null").eq("send_attempt_state", "none").execute())
@@ -161,6 +238,7 @@ class OutboundDraftRepository:
 
     def complete_send_claim(self, draft_id: str, claim_token: str, provider_sid: str) -> bool:
         try:
+            latency_counter("supabase_writes")
             response = (self._client.table("messages").update({"external_provider":"exotel","external_message_id":provider_sid,"delivery_status":"accepted","draft_status":"sent","sent_at":datetime.now(UTC).isoformat(),"send_attempt_state":"completed"})
                 .eq("id",draft_id).eq("send_claim_token",claim_token).eq("send_attempt_state","claimed").execute())
             return _response_row(response) is not None
@@ -168,6 +246,7 @@ class OutboundDraftRepository:
 
     def mark_claim_reconciliation_required(self, draft_id: str, claim_token: str) -> bool:
         try:
+            latency_counter("supabase_writes")
             response=self._client.table("messages").update({"send_attempt_state":"reconciliation_required","reconciliation_required_at":datetime.now(UTC).isoformat()}).eq("id",draft_id).eq("send_claim_token",claim_token).eq("send_attempt_state","claimed").execute()
             return _response_row(response) is not None
         except Exception:return False
@@ -175,6 +254,7 @@ class OutboundDraftRepository:
     def mark_claim_provider_failed(self, draft_id: str, claim_token: str) -> bool:
         """Record a definite provider rejection without inventing a delivery SID."""
         try:
+            latency_counter("supabase_writes")
             response = (self._client.table("messages").update({"send_attempt_state": "provider_failed"})
                 .eq("id", draft_id).eq("send_claim_token", claim_token).eq("send_attempt_state", "claimed").execute())
             return _response_row(response) is not None
@@ -204,6 +284,7 @@ class OutboundDraftRepository:
             update["sent_at"] = now
 
         try:
+            latency_counter("supabase_writes")
             response = (
                 self._client.table("messages")
                 .update(update)

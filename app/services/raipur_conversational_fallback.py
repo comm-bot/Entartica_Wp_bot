@@ -6,6 +6,7 @@ import re
 from typing import Any, Callable
 
 from app.prompts.raipur_system_prompt import RAIPUR_SYSTEM_PROMPT
+from app.services.latency import latency_openai_call
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,8 @@ def build_raipur_conversational_fallback(settings: Any) -> RaipurConversationalF
             "</approved_raipur_context>\n"
             "Return a customer-facing answer only."
         )
-        response = client.responses.create(model=model.strip(), instructions=f"{prompt}\n{correction}", input=prepared_input)
+        with latency_openai_call("conversational_fallback", model.strip()):
+            response = client.responses.create(model=model.strip(), instructions=f"{prompt}\n{correction}", input=prepared_input)
         output = getattr(response, "output_text", None)
         return output if isinstance(output, str) else None
 

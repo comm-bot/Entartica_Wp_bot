@@ -58,6 +58,13 @@ def test_planner_rejects_unvalidated_llm_action_names():
  plan=planner.plan("hello",ConversationContext(BookingEnquiryService.__annotations__ and None),language="en")
  assert plan.intent=="greeting"
 
+def test_planner_routes_contact_request_without_llm_or_stale_service():
+ calls=[]
+ planner=RaipurDialoguePlanner(lambda request: calls.append(request) or None)
+ context=SimpleNamespace(last_service_code="houseboat_celebration",pending_action=None)
+ plan=planner.plan("Can you send me their number?",context,language="en")
+ assert plan.intent=="contact_information" and plan.service_code is None
+
 def test_stale_greeting_resets_session_and_pending_ampm_keeps_date():
  record={"updated_at":(datetime.now(UTC)-timedelta(minutes=31)).isoformat(),"service_name":"Kayak","service_code":"kayak"}
  assert _is_stale_greeting(record,"Hi",30)

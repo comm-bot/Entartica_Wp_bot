@@ -27,11 +27,14 @@ APPROVED_RAIPUR_SERVICES: tuple[ApprovedRaipurService, ...] = (
     ApprovedRaipurService("Kayak", "kayak", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Speed Boat", "speed-boat", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Aqua Cycle", "aqua-cycle", "water_ride", "Water Ride Portfolio"),
+    ApprovedRaipurService("Aqua Roller", "aqua-roller", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Jet Ski", "jet-ski", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Water Bike", "water-bike", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Inflatable Sofa Ride", "inflatable-sofa-ride", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Bumper Boat", "bumper-boat", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Kids' Paddle Boat", "kids-paddle-boat", "water_ride", "Water Ride Portfolio"),
+    ApprovedRaipurService("Zorbing Ball", "zorbing-ball", "water_ride", "Water Ride Portfolio"),
+    ApprovedRaipurService("Kids Bumper Boat", "kids-bumper-boat", "water_ride", "Water Ride Portfolio"),
     ApprovedRaipurService("Pontoon Celebration", "pontoon-celebration", "floating_celebration", "Floating Celebration Services"),
     ApprovedRaipurService("Floating Gazebo", "floating-gazebo", "floating_celebration", "Floating Celebration Services"),
     ApprovedRaipurService("Jetty Gazebo", "jetty-gazebo", "floating_celebration", "Floating Celebration Services"),
@@ -47,8 +50,17 @@ def normalize_service_text(value: object) -> str | None:
         return None
     normalized = re.sub(r"[^\w\u0900-\u097f]+", " ", value.casefold()).replace("_", " ").strip()
     normalized = re.sub(r"\bbuper\b", "bumper", normalized)
+    normalized = re.sub(r"\bbumber\b", "bumper", normalized)
+    normalized = re.sub(r"\bparty\s+baot\b", "party boat", normalized)
+    normalized = re.sub(r"\bkayk\b", "kayak", normalized)
+    normalized = re.sub(r"\baqua\s+cyle\b", "aqua cycle", normalized)
     normalized = re.sub(r"\b(bumper|pontoon|speed|party|house)\s+bot\b", r"\1 boat", normalized)
     normalized = re.sub(r"\b(speed)\s+baot\b", r"\1 boat", normalized)
+    normalized = re.sub(r"\bhousebot\b", "house boat", normalized)
+    normalized = re.sub(r"\baqau\b", "aqua", normalized)
+    normalized = re.sub(r"\bbuperboat\b", "bumper boat", normalized)
+    normalized = re.sub(r"\bbumperboat\b", "bumper boat", normalized)
+    normalized = re.sub(r"\bh20\b", "h2o", normalized)
     return normalized or None
 
 
@@ -67,18 +79,38 @@ def approved_service_by_name(value: object) -> ApprovedRaipurService | None:
 
 
 def approved_service_from_message(value: object) -> ApprovedRaipurService | None:
-    """Extract exactly one approved service name or explicitly approved alias."""
+    """Extract exactly one approved service name or explicitly approved alias.
+
+    When one approved phrase is contained inside another (for example "Kids
+    Bumper Boat" contains "Bumper Boat"), the longer more-specific phrase wins
+    so a child activity is never collapsed into its parent service name.
+    """
 
     normalized = normalize_service_text(value)
     if normalized is None:
         return None
     padded = f" {normalized} "
-    exact = [item for item in APPROVED_RAIPUR_SERVICES if f" {normalize_service_text(item.name)} " in padded]
-    if len(exact) == 1:
-        return exact[0]
-    matches = [item for phrase, item in _SERVICE_ALIASES.items() if f" {phrase} " in padded]
-    unique_matches = {item.slug: item for item in matches}
-    return next(iter(unique_matches.values())) if len(unique_matches) == 1 else None
+    candidates: list[tuple[str, ApprovedRaipurService]] = []
+    for item in APPROVED_RAIPUR_SERVICES:
+        name = normalize_service_text(item.name)
+        if name and f" {name} " in padded:
+            candidates.append((name, item))
+    for phrase, item in _SERVICE_ALIASES.items():
+        if f" {phrase} " in padded:
+            candidates.append((phrase, item))
+    if not candidates:
+        return None
+    unique: dict[str, tuple[str, ApprovedRaipurService]] = {}
+    for phrase, item in candidates:
+        current = unique.get(item.slug)
+        if current is None or len(phrase) > len(current[0]):
+            unique[item.slug] = (phrase, item)
+    if len(unique) == 1:
+        return next(iter(unique.values()))[1]
+    best_phrase, best_item = max(unique.values(), key=lambda pair: len(pair[0]))
+    if all(phrase in best_phrase for phrase, _ in unique.values()):
+        return best_item
+    return None
 
 
 def approved_primary_service_from_question(value: object) -> ApprovedRaipurService | None:
@@ -132,9 +164,10 @@ _BY_SLUG = {item.slug: item for item in APPROVED_RAIPUR_SERVICES}
 _KNOWLEDGE_CODES = {
     "staycation-combo": "staycation_combo", "daycation-package": "daycation_package",
     "pontoon-boat": "pontoon_boat_ride", "kayak": "kayaking", "speed-boat": "speed_boat_ride",
-    "aqua-cycle": "aqua_cycle", "jet-ski": "jet_ski_ride", "water-bike": "water_bike",
+    "aqua-cycle": "aqua_cycle", "aqua-roller": "aqua_roller", "jet-ski": "jet_ski_ride", "water-bike": "water_bike",
     "inflatable-sofa-ride": "inflatable_sofa_ride", "bumper-boat": "bumper_boat",
-    "kids-paddle-boat": "kids_paddle_boat", "pontoon-celebration": "pontoon_celebration",
+    "kids-paddle-boat": "kids_paddle_boat", "zorbing-ball": "zorbing_ball",
+    "kids-bumper-boat": "kids_bumper_boat", "pontoon-celebration": "pontoon_celebration",
     "floating-gazebo": "floating_gazebo", "jetty-gazebo": "jetty_gazebo",
     "houseboat-celebration": "houseboat_celebration", "party-boat-celebration": "party_boat_celebration",
 }
@@ -144,10 +177,17 @@ _SERVICE_ALIASES = {
     "kayak": _BY_SLUG["kayak"], "kayaking": _BY_SLUG["kayak"], "कयाक": _BY_SLUG["kayak"],
     "pontoon": _BY_SLUG["pontoon-boat"], "pontoon boat": _BY_SLUG["pontoon-boat"], "पोंटून बोट": _BY_SLUG["pontoon-boat"],
     "aqua cycle": _BY_SLUG["aqua-cycle"], "water cycle": _BY_SLUG["aqua-cycle"],
+    "aqua roller": _BY_SLUG["aqua-roller"], "aqua roler": _BY_SLUG["aqua-roller"],
+    "aqua rollar": _BY_SLUG["aqua-roller"], "water roller": _BY_SLUG["aqua-roller"],
     "water bike": _BY_SLUG["water-bike"], "sofa ride": _BY_SLUG["inflatable-sofa-ride"], "inflatable sofa": _BY_SLUG["inflatable-sofa-ride"],
     "bumper boat": _BY_SLUG["bumper-boat"], "kids paddle boat": _BY_SLUG["kids-paddle-boat"], "paddle boat": _BY_SLUG["kids-paddle-boat"],
+    "zorbing ball": _BY_SLUG["zorbing-ball"], "zorbing": _BY_SLUG["zorbing-ball"], "zorb ball": _BY_SLUG["zorbing-ball"],
+    "kids bumper boat": _BY_SLUG["kids-bumper-boat"], "kid bumper boat": _BY_SLUG["kids-bumper-boat"],
+    "children bumper boat": _BY_SLUG["kids-bumper-boat"], "child bumper boat": _BY_SLUG["kids-bumper-boat"],
+    "kids bumperboat": _BY_SLUG["kids-bumper-boat"],
     "floating gazebo": _BY_SLUG["floating-gazebo"], "jetty gazebo": _BY_SLUG["jetty-gazebo"],
-    "houseboat celebration": _BY_SLUG["houseboat-celebration"], "party boat": _BY_SLUG["party-boat-celebration"], "celebration boat": _BY_SLUG["party-boat-celebration"],
+    "houseboat": _BY_SLUG["houseboat-celebration"], "house boat": _BY_SLUG["houseboat-celebration"], "houseboat celebration": _BY_SLUG["houseboat-celebration"], "house boat celebration": _BY_SLUG["houseboat-celebration"], "housboat": _BY_SLUG["houseboat-celebration"], "house bot": _BY_SLUG["houseboat-celebration"], "\u0939\u093e\u0909\u0938 \u092c\u094b\u091f": _BY_SLUG["houseboat-celebration"], "party boat": _BY_SLUG["party-boat-celebration"], "celebration boat": _BY_SLUG["party-boat-celebration"],
+    "pontoon boat celebration": _BY_SLUG["pontoon-celebration"],
     "staycation": _BY_SLUG["staycation-combo"], "daycation": _BY_SLUG["daycation-package"],
     "day package": _BY_SLUG["daycation-package"], "one day package": _BY_SLUG["daycation-package"],
     "same day package": _BY_SLUG["daycation-package"],

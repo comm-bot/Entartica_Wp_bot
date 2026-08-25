@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import subprocess
+import inspect
+from time import perf_counter
 from functools import lru_cache
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -15,6 +18,7 @@ from app.integrations.exotel import ExotelPayloadError, is_exotel_event_envelope
 from app.integrations.supabase import get_supabase_client
 from app.services.inbound_messages import InboundMessageService
 from app.services.raipur_inbound_orchestrator import RaipurInboundOrchestrator
+from app.services.coimbatore.inbound_orchestrator import CoimbatoreInboundOrchestrator
 from app.repositories.outbound_drafts import OutboundDraftRepository
 from app.services.raipur_draft_integration import create_draft_after_orchestration
 from app.services.raipur_automatic_replies import attempt_automatic_reply
@@ -25,6 +29,24 @@ router = APIRouter(prefix="/webhooks/exotel", tags=["exotel"])
 logger = logging.getLogger("uvicorn.error")
 _conversation_locks: dict[str, asyncio.Lock] = {}
 _conversation_locks_guard = asyncio.Lock()
+
+
+@lru_cache(maxsize=1)
+def _runtime_git_commit() -> str:
+    """Return a safe local revision marker; never fail inbound processing."""
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+            text=True, timeout=1, check=True,
+        ).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _safe_response_preview(value: object) -> str:
+    if not isinstance(value, str):
+        return "none"
+    return " ".join(value.split())[:80] or "none"
 
 
 async def _lock_for_inbound(message) -> asyncio.Lock:
@@ -48,10 +70,13 @@ def get_inbound_message_service() -> InboundMessageService:
     return InboundMessageService(get_supabase_client())
 
 
+@lru_cache(maxsize=1)
 def get_raipur_inbound_orchestrator() -> RaipurInboundOrchestrator:
-    """Build the non-sending orchestrator only after inbound storage succeeds."""
-    from app.rag.raipur_knowledge_provider import RaipurKnowledgeProvider
+    """Compatibility-named factory selecting the configured active runtime."""
     client, settings = get_supabase_client(), get_settings()
+    if getattr(settings, "active_location", None) == "coimbatore":
+        return CoimbatoreInboundOrchestrator(client, settings)
+    from app.rag.raipur_knowledge_provider import RaipurKnowledgeProvider
     return RaipurInboundOrchestrator(client, settings, knowledge_provider=RaipurKnowledgeProvider(client, settings))
 
 
@@ -74,7 +99,9 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
     """Run slow persistence/orchestration after Exotel has received its acknowledgement."""
 
     trace = trace or LatencyTrace()
+    trace.stages_ms["background_task_start_delay"] = trace.total_ms()
     with use_latency_trace(trace):
+        trace.mark("background_task_started", event="background_task_started")
         try:
             service = get_inbound_message_service()
         except Exception:
@@ -85,7 +112,10 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
         for message in messages:
           try:
             lock = await _lock_for_inbound(message)
+            lock_wait_started = perf_counter()
             async with lock:
+             trace.stages_ms["customer_lock_wait"] = trace.stages_ms.get("customer_lock_wait", 0.0) + (perf_counter() - lock_wait_started) * 1000
+             trace.event("customer_lock_wait_complete", duration_ms=trace.value("customer_lock_wait"))
              await _process_one_inbound_message(service, message, settings, trace)
           except Exception:
             # Never turn a later database/RAG failure into an Exotel webhook error.
@@ -96,6 +126,7 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
 async def _process_one_inbound_message(service, message, settings, trace: LatencyTrace) -> None:
     """Run the full persistence-to-reply lifecycle under one conversation lock."""
     result = await run_in_threadpool(service.process, message)
+    trace.event("inbound_message_saved")
     if result.duplicate:
                 logger.info("orchestration_skipped request_id=%s reason=duplicate_inbound", trace.request_id)
                 trace.summary(intent="duplicate", response_mode="duplicate", response_basis="none")
@@ -104,22 +135,28 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                 logger.info("orchestration_skipped request_id=%s reason=feature_disabled", trace.request_id)
                 trace.summary(intent="feature_disabled", response_mode="none", response_basis="none")
                 return
-    if message.message_type != "text" or result.customer is None or result.conversation is None:
+    if message.message_type not in {"text", "flow"} or result.customer is None or result.conversation is None:
                 logger.info("orchestration_skipped reason=unsupported_inbound_type")
                 return
 
     try:
                 logger.info("orchestration_started request_id=%s", trace.request_id)
-                with latency_stage("deterministic_routing"):
+                with latency_stage("orchestrator_initialization"):
+                    orchestrator = await run_in_threadpool(get_raipur_inbound_orchestrator)
+                trace.event("orchestrator_initialization_complete", duration_ms=trace.value("orchestrator_initialization"))
+                with latency_stage("total_orchestration"), latency_stage("deterministic_routing"):
                     orchestration = await run_in_threadpool(
-                        get_raipur_inbound_orchestrator().process,
+                        orchestrator.process,
                         message,
                         customer=result.customer,
                         conversation=result.conversation,
                         source_message_id=message.external_message_id,
                     )
+                trace.event("routing_complete", duration_ms=trace.value("total_orchestration"))
+                trace.stages_ms["reply_ready"] = trace.total_ms()
+                trace.mark("reply_ready", event="reply_ready")
                 repository = OutboundDraftRepository(get_supabase_client())
-                with latency_stage("draft_or_message_persistence"):
+                with latency_stage("draft_creation"), latency_stage("draft_or_message_persistence"):
                     draft_result = await run_in_threadpool(
                         create_draft_after_orchestration,
                         settings=settings,
@@ -144,6 +181,18 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                         sender_factory=lambda: get_raipur_draft_sender(repository, settings),
                     )
                     response_sent = automatic.response_sent
+                    if response_sent and hasattr(orchestrator, "confirm_standard_package_presented"):
+                        try:
+                            with latency_stage("package_state_commit"):
+                                committed = await run_in_threadpool(
+                                    orchestrator.confirm_standard_package_presented,
+                                    orchestration,
+                                    result.customer["id"],
+                                    result.conversation["id"],
+                                )
+                            logger.info("package_presented_committed message_id=%s committed=%s", message.external_message_id, committed)
+                        except Exception:
+                            logger.exception("standard_package_acceptance_state_failed message_id=%s", message.external_message_id)
                     logger.info(
                         "automatic_reply_completed attempted=%s response_sent=%s response_mode=%s reason=%s",
                         automatic.attempted,
@@ -181,13 +230,44 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                     draft_result.draft_saved,
                 )
                 metadata = getattr(orchestration, "safe_metadata", {})
+                logger.info(
+                    "raipur_runtime_trace git_commit=%s module_path=%s orchestrator_class=%s "
+                    "selected_route=%s intent=%s service_code=%s topic=%s answer_source=%s shared_handler_used=%s "
+                    "catalogue_type=%s catalogue_source=%s catalogue_filter=%s catalogue_item_count=%s "
+                    "fallback_reason=%s response_character_count=%s",
+                    _runtime_git_commit(),
+                    inspect.getfile(RaipurInboundOrchestrator),
+                    RaipurInboundOrchestrator.__name__,
+                    metadata.get("graph_answer_source", "none") if isinstance(metadata, dict) else "none",
+                    getattr(orchestration, "detected_intent", "unknown"),
+                    metadata.get("service_code", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("topic", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("answer_source", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("shared_handler_used", False) if isinstance(metadata, dict) else False,
+                    metadata.get("catalogue_type", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("catalogue_source", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("catalogue_filter", "none") if isinstance(metadata, dict) else "none",
+                    metadata.get("catalogue_item_count", 0) if isinstance(metadata, dict) else 0,
+                    metadata.get("fallback_reason") if isinstance(metadata, dict) else None,
+                    len(getattr(orchestration, "draft_text", "")) if isinstance(getattr(orchestration, "draft_text", None), str) else 0,
+                )
                 trace.summary(
                     intent=getattr(orchestration, "detected_intent", None),
                     response_mode=metadata.get("response_mode") if isinstance(metadata, dict) else None,
                     response_basis=metadata.get("response_basis") if isinstance(metadata, dict) else None,
+                    route=metadata.get("graph_answer_source") if isinstance(metadata, dict) else None,
+                    conversation_id=result.conversation.get("id") if isinstance(result.conversation, dict) else None,
+                    service_code=metadata.get("service_code") if isinstance(metadata, dict) else None,
+                    topic=metadata.get("topic") if isinstance(metadata, dict) else None,
+                    answer_source=metadata.get("answer_source") if isinstance(metadata, dict) else None,
+                    cache_hit=metadata.get("knowledge_cache_hit", False) if isinstance(metadata, dict) else False,
                 )
+                trace.event("turn_complete")
     except Exception:
-                logger.error("exotel_inbound_background_failed operation=orchestration request_id=%s", trace.request_id)
+                logger.exception(
+                    "exotel_inbound_background_failed operation=orchestration request_id=%s",
+                    trace.request_id,
+                )
                 trace.summary()
 
 
@@ -197,6 +277,7 @@ async def receive_inbound_message(request: Request, background_tasks: Background
 
     trace = LatencyTrace()
     trace.stages_ms["webhook_received"] = 0.0
+    trace.mark("webhook_received", event="webhook_received")
     logger.info("webhook_received request_id=%s", trace.request_id)
     raw_body = await request.body()
     settings = get_settings()
@@ -234,5 +315,6 @@ async def receive_inbound_message(request: Request, background_tasks: Background
     if not messages:
         return Response(status_code=200)
     background_tasks.add_task(process_inbound_messages_background, messages, settings, trace)
+    trace.stages_ms["webhook_ack"] = trace.total_ms()
     logger.info("webhook_acknowledged request_id=%s payload_validation_ms=%s", trace.request_id, trace.value("payload_validation"))
     return Response(status_code=200)

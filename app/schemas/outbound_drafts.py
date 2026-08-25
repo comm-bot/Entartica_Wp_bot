@@ -3,7 +3,7 @@ from typing import Literal
 DraftStatus=Literal['pending_review','approved','rejected','sent','failed']
 @dataclass(frozen=True)
 class DraftCreateRequest:
- customer_id:str;conversation_id:str;related_inbound_message_id:str;content:str;language:str;action:str;template_key:str|None;human_handover_required:bool;response_valid:bool
+ customer_id:str;conversation_id:str;related_inbound_message_id:str;content:str;language:str;action:str;template_key:str|None;human_handover_required:bool;response_valid:bool;interactive_message:dict[str,object]|None=None;media_message:dict[str,object]|None=None;template_message:dict[str,object]|None=None;package_metadata:dict[str,object]|None=None
 @dataclass(frozen=True)
 class DraftCreationResult:
  created:bool;status:DraftStatus|None;reason:str

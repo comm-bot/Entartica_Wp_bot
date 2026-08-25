@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from supabase import Client
+from app.services.latency import latency_counter
 
 
 class LocationRepository:
@@ -53,6 +54,7 @@ class LocationRepository:
         normalized = _normalize_code(code)
         if normalized is None:
             return None
+        latency_counter("supabase_reads")
         response = (
             self._client.table("locations")
             .select("*")

@@ -24,6 +24,8 @@ class HealthResponse(BaseModel):
     raipur_langgraph_enabled: bool
     raipur_langgraph_comparison_mode: bool
     active_conversation_engine: Literal["legacy", "langgraph"]
+    coimbatore_langgraph_enabled: bool
+    active_coimbatore_engine: Literal["legacy", "langgraph"]
 
 
 _STARTED_AT = datetime.now(timezone.utc).isoformat()
@@ -44,4 +46,6 @@ async def health_check() -> HealthResponse:
         raipur_langgraph_enabled=settings.raipur_langgraph_enabled,
         raipur_langgraph_comparison_mode=settings.raipur_langgraph_comparison_mode,
         active_conversation_engine="langgraph" if settings.raipur_langgraph_enabled else "legacy",
+        coimbatore_langgraph_enabled=settings.coimbatore_langgraph_enabled,
+        active_coimbatore_engine="langgraph" if settings.coimbatore_langgraph_enabled else "legacy",
     )

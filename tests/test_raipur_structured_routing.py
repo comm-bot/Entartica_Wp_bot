@@ -30,6 +30,7 @@ class Services:
             {"id": "speed", "name": "Speed Boat", "slug": "speed-boat", "is_active": True},
             {"id": "kayak", "name": "Kayak", "slug": "kayak", "is_active": True},
             {"id": "gazebo", "name": "Floating Gazebo", "slug": "floating-gazebo", "is_active": True},
+            {"id": "staycation", "name": "Staycation Combo", "slug": "staycation-combo", "is_active": True},
             {"id": "inactive", "name": "Pontoon Boat", "slug": "pontoon-boat", "is_active": False},
         ]
     def list_active_for_location(self, _location_id): return list(self.rows)
@@ -100,6 +101,16 @@ def test_location_is_deterministic_and_never_calls_rag(question):
     assert result.safe_metadata["deterministic_answer_used"] is True
     assert result.safe_metadata["response_basis"] == "deterministic"
     assert result.safe_metadata["structured_grounding"] is True
+
+
+@pytest.mark.parametrize("question", ("ADRESS", "LOCATION", "PATA BATAO", "KAHAN HAI", "à¤ªà¤¤à¤¾ à¤­à¥‡à¤œà¥‹"))
+def test_address_typos_and_short_requests_are_deterministic(question):
+    result, knowledge, availability = _process(question)
+    assert result.detected_intent == "location"
+    assert "Sector 24" in result.draft_text
+    assert "https://maps.app.goo.gl/VtxPyANfMC3rztex8" in result.draft_text
+    assert knowledge.calls == 0 and availability.calls == 0
+    assert not result.human_handover_required
 
 
 def test_service_list_uses_only_active_approved_records_without_price_or_slot_claims():
@@ -294,3 +305,41 @@ def test_hinglish_and_hindi_templates_keep_the_current_language_style():
     hindi, _, _ = _process("क्या जेट स्की है?")
     assert "Raipur mein" in hinglish.draft_text
     assert "Jet Ski" in hindi.draft_text and "is offered at entartica raipur" not in hindi.draft_text.casefold()
+
+
+@pytest.mark.parametrize("question", [
+    "celebration on boat i want", "which celebration package you have",
+    "i dont want water activities", "boat pe birthday karna hai",
+    "mujhe water rides nahi chahiye",
+])
+def test_broad_celebration_preferences_route_to_approved_celebration_catalogue(question):
+    result, knowledge, _ = _process(question)
+    assert result.reason_code == "structured_celebration_service_list"
+    assert result.detected_intent == "celebration_service_list"
+    assert "price" not in result.draft_text.casefold()
+    assert knowledge.calls == 0 and knowledge.detail_calls == []
+
+
+@pytest.mark.parametrize("question", ["ok share water activities info", "rides batao"])
+def test_broad_activity_requests_return_the_catalogue_before_fallback(question):
+    result, knowledge, _ = _process(question)
+    assert result.reason_code == "structured_service_list"
+    assert result.detected_intent == "service_catalogue"
+    assert "enough confirmed information" not in result.draft_text.casefold()
+    assert knowledge.calls == 0 and knowledge.detail_calls == []
+
+
+def test_combo_package_request_lists_only_approved_active_package_options():
+    result, knowledge, _ = _process("i want combo package")
+    assert result.reason_code == "structured_package_service_list"
+    assert "Staycation Combo" in result.draft_text
+    assert "pricing" in result.draft_text.casefold() and "sales team" not in result.draft_text.casefold()
+    assert knowledge.calls == 0 and knowledge.detail_calls == []
+
+
+def test_bare_jetski_alias_uses_the_approved_service_overview_path():
+    result, knowledge, _ = _process("jetski")
+    assert result.reason_code == "approved_service_detail"
+    assert result.detected_intent in {"service_detail", "service_overview", "general"}
+    assert knowledge.detail_calls and "jet ski" in knowledge.detail_calls[-1][1].casefold()
+    assert "sales team" not in result.draft_text.casefold()

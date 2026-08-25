@@ -27,7 +27,8 @@ def get_supabase_client() -> Client:
 
 def log_startup_readiness(client: Client) -> bool:
     """Read minimal table metadata once and emit only safe readiness fields."""
-    tables = ("customers", "conversations", "messages", "knowledge_documents")
+    tables = ("customers", "conversations", "messages", "knowledge_documents",
+              "bookings", "payments", "webhook_events")
     try:
         for table in tables:
             client.table(table).select("id").limit(1).execute()

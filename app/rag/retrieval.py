@@ -5,9 +5,15 @@ from math import sqrt
 from typing import Any, Callable
 import httpx
 from functools import lru_cache
+from threading import Lock
+from time import monotonic
 from app.rag.location_filter import is_document_available_for_location
+from app.services.latency import latency_attribute, latency_counter, latency_openai_call
 
 class KnowledgeRetrievalError(RuntimeError): pass
+_CORPUS_CACHE_TTL_SECONDS = 300
+_corpus_cache: dict[object, tuple[float, tuple[dict, ...]]] = {}
+_corpus_cache_lock = Lock()
 @lru_cache(maxsize=1)
 def _embedding_http_client() -> httpx.Client:
  return httpx.Client(timeout=30.0)
@@ -29,7 +35,8 @@ def embed_texts(texts:list[str],settings:Any,*,http_client_factory:Callable|None
  factory=http_client_factory
  try:
   client=factory(timeout=30.0) if factory is not None else _embedding_http_client();facts['embedding_client_created']=True
-  response=client.post('https://api.openai.com/v1/embeddings',headers={'Authorization':f"Bearer {settings.openai_api_key.get_secret_value()}",'Content-Type':'application/json'},json={'model':settings.openai_embedding_model,'input':texts})
+  with latency_openai_call("embedding", settings.openai_embedding_model, embedding=True):
+   response=client.post('https://api.openai.com/v1/embeddings',headers={'Authorization':f"Bearer {settings.openai_api_key.get_secret_value()}",'Content-Type':'application/json'},json={'model':settings.openai_embedding_model,'input':texts})
   response.raise_for_status();payload=response.json();facts['embedding_response_received']=True
  except Exception:
   raise KnowledgeRetrievalError('embedding_request_failed') from None
@@ -67,22 +74,50 @@ def _score(a,b):
  if len(a)!=len(b):return None
  d=sqrt(sum(x*x for x in a))*sqrt(sum(x*x for x in b));return sum(x*y for x,y in zip(a,b))/d if d else None
 def retrieve_candidates(client:Any,question_embedding:list[float],*,limit:int=20)->list[dict]:
+ return retrieve_candidates_for_location(client,question_embedding,location_code='raipur',limit=limit)
+def retrieve_candidates_for_location(client:Any,question_embedding:list[float],*,location_code:str,limit:int=20)->list[dict]:
  if limit<1:raise KnowledgeRetrievalError('invalid_limit')
+ if location_code not in {'raipur','coimbatore'}:raise KnowledgeRetrievalError('invalid_location')
  try:
-  docs=_rows(client.table('knowledge_documents').select('id,source_file,metadata').eq('is_active',True).execute()); ids={d['id']:d for d in docs if isinstance(d.get('id'),str) and isinstance(d.get('metadata'),dict) and is_document_available_for_location(d['metadata'],'raipur') and d['metadata'].get('approval_status')=='approved'}
-  chunks=_rows(client.table('knowledge_chunks').select('knowledge_document_id,content,embedding,metadata').in_('knowledge_document_id',list(ids)).execute())
+  corpus=_eligible_vector_corpus(client,location_code)
  except Exception:raise KnowledgeRetrievalError('retrieval_failed') from None
  out=[]
  mismatched=False
- for c in chunks:
-  vec=_vector(c.get('embedding'))
+ for c in corpus:
+  vec=c['embedding']
   if vec is not None and len(vec)!=len(question_embedding):mismatched=True
   score=_score(question_embedding,vec) if vec is not None else None
-  metadata=c.get('metadata',{})
-  if c.get('knowledge_document_id') in ids and isinstance(c.get('content'),str) and c['content'].strip() and score is not None and (not isinstance(metadata,dict) or metadata.get('customer_output_allowed') is not False):
-   d=ids[c['knowledge_document_id']];out.append({'knowledge_document_id':c['knowledge_document_id'],'content':c['content'],'metadata':c.get('metadata',{}),'source_filename':d['metadata'].get('source_filename',d.get('source_file')),'confidence':score})
+  if score is not None:out.append({key:value for key,value in c.items() if key!='embedding'}|{'confidence':score})
  if not out and mismatched:raise KnowledgeRetrievalError('dimension_mismatch')
  return sorted(out,key=lambda x:x['confidence'],reverse=True)[:limit]
+
+def _eligible_raipur_vector_corpus(client:Any)->tuple[dict,...]:
+ """Load an immutable approved Raipur corpus snapshot at most once per TTL."""
+ return _eligible_vector_corpus(client,'raipur')
+def _eligible_vector_corpus(client:Any,location_code:str)->tuple[dict,...]:
+ key=(client,location_code);now=monotonic()
+ with _corpus_cache_lock:
+  cached=_corpus_cache.get(key)
+  if cached is not None and cached[0]>now:
+   latency_attribute('vector_cache_hit',True);return cached[1]
+ latency_attribute('vector_cache_hit',False)
+ latency_counter('supabase_reads',2)
+ docs=_rows(client.table('knowledge_documents').select('id,source_file,metadata').eq('is_active',True).execute())
+ ids={d['id']:d for d in docs if isinstance(d.get('id'),str) and isinstance(d.get('metadata'),dict) and is_document_available_for_location(d['metadata'],location_code) and d['metadata'].get('approval_status')=='approved'}
+ chunks=_rows(client.table('knowledge_chunks').select('knowledge_document_id,content,embedding,metadata').in_('knowledge_document_id',list(ids)).execute()) if ids else []
+ rows=[]
+ for chunk in chunks:
+  vector=_vector(chunk.get('embedding'));metadata=chunk.get('metadata',{})
+  if chunk.get('knowledge_document_id') not in ids or not isinstance(chunk.get('content'),str) or not chunk['content'].strip() or vector is None or isinstance(metadata,dict) and metadata.get('customer_output_allowed') is False:continue
+  document=ids[chunk['knowledge_document_id']]
+  rows.append({'knowledge_document_id':chunk['knowledge_document_id'],'content':chunk['content'],'embedding':tuple(vector),'metadata':metadata,'source_filename':document['metadata'].get('source_filename',document.get('source_file'))})
+ snapshot=tuple(rows)
+ with _corpus_cache_lock:_corpus_cache[key]=(now+_CORPUS_CACHE_TTL_SECONDS,snapshot)
+ return snapshot
+
+def clear_retrieval_corpus_cache()->None:
+ """Clear the bounded process cache for tests or controlled operations."""
+ with _corpus_cache_lock:_corpus_cache.clear()
 
 def inspect_raipur_corpus(client:Any,query_embedding:list[float])->dict[str,int|float|None|bool]:
  """Read-only counts for the same eligible-document and vector rules as runtime retrieval."""

@@ -32,7 +32,7 @@ def test_active_service_files_use_canonical_snake_case_manifest_codes():
     plan, errors = build_plan(ROOT)
     services = [row.document for row in plan if row.document and row.document.metadata["knowledge_type"] in {"service", "celebration"}]
 
-    assert not errors and len(services) == 16
+    assert not errors and len(services) == 19
     assert all(document.source_file == f"active/services/{document.metadata['service_code']}.md" for document in services)
 
 
@@ -71,7 +71,7 @@ def test_unified_dry_run_is_manifest_only_and_never_constructs_clients(monkeypat
     monkeypatch.setattr(ingestion.sys, "argv", ["ingest_raipur_knowledge.py", "--dry-run"])
     assert ingestion.main() == 0
     output = capsys.readouterr().out
-    assert "eligible_rows=20" in output and "writes=0" in output and "embedding_calls=0" in output
+    assert "eligible_rows=23" in output and "writes=0" in output and "embedding_calls=0" in output
 
 
 def test_replacement_deactivates_only_matching_service_or_legacy_location_rows():

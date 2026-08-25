@@ -42,7 +42,7 @@ class NormalizedDeliveryStatus(BaseModel):
 
     provider_message_id: str | None = None
     internal_message_id: str | None = None
-    status: Literal["sent", "delivered", "read", "failed"] | None = None
+    status: Literal["accepted", "sent", "delivered", "read", "failed"] | None = None
     occurred_at: datetime | None = None
     failure_code: str | None = None
     failure_description: str | None = None

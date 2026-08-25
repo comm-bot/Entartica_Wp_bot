@@ -11,7 +11,7 @@ from app.repositories.conversations import ConversationRepository
 from app.repositories.customers import CustomerRepository
 from app.repositories.messages import DuplicateMessageError, MessageRepository
 from app.schemas.exotel_webhook import NormalizedInboundMessage
-from app.services.latency import latency_stage
+from app.services.latency import current_latency_trace, latency_stage
 
 
 # Uvicorn configures this logger for normal server-console output.
@@ -72,6 +72,7 @@ class InboundMessageService:
                 customer = self._customers.get_or_create(
                     message.customer_whatsapp_number, message.profile_name
                 )
+            if (trace := current_latency_trace()) is not None: trace.event("customer_lookup_complete", duration_ms=trace.value("customer_lookup"))
         except Exception as error:
             _log_repository_failure("customer_get_or_create", error)
             raise
@@ -79,12 +80,13 @@ class InboundMessageService:
         try:
             with latency_stage("conversation_load"):
                 conversation = self._conversations.get_or_create_open(customer["id"])
+            if (trace := current_latency_trace()) is not None: trace.event("conversation_lookup_complete", duration_ms=trace.value("conversation_load"))
         except Exception as error:
             _log_repository_failure("conversation_get_or_create_open", error)
             raise
 
         try:
-            with latency_stage("duplicate_check"), latency_stage("draft_or_message_persistence"):
+            with latency_stage("duplicate_check"), latency_stage("draft_or_message_persistence"), latency_stage("inbound_message_persistence"):
                 stored = self._messages.store_inbound(
                     message,
                     customer_id=customer["id"],

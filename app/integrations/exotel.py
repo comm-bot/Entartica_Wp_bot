@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+from time import perf_counter
 import re
 from typing import Any
 
@@ -22,6 +23,9 @@ from app.schemas.exotel_status import (
     ExotelDeliveryEnvelope,
     NormalizedDeliveryStatus,
 )
+from app.schemas.interactive_messages import InteractiveMessage
+from app.schemas.template_messages import TemplateMessage
+from app.services.latency import latency_stage
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -121,14 +125,98 @@ class ExotelClient:
     ) -> ExotelAcceptedMessage:
         """Submit a text message and return only the accepted provider SID."""
 
+        safe_preview = text[:48] if isinstance(text, str) else ""
+        logger.info(
+            "event=outbound_unicode_trace response_repr=%r contains_mojibake=%s contains_unicode_bullet=%s",
+            safe_preview,
+            "\u00e2\u20ac\u00a2" in text if isinstance(text, str) else False,
+            "\u2022" in text if isinstance(text, str) else False,
+        )
         payload = self.build_text_payload(
             to_number=to_number,
             text=text,
             status_callback=status_callback,
             custom_data=custom_data,
         )
+        return await self._submit_payload(payload)
+
+    async def send_interactive_message(
+        self,
+        to_number: str,
+        interactive: InteractiveMessage,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> ExotelAcceptedMessage:
+        """Submit one validated list/Flow message through the normal endpoint."""
+        with latency_stage("Exotel_request_prepare"):
+            payload = self.build_interactive_payload(
+                to_number=to_number, interactive=interactive,
+                status_callback=status_callback, custom_data=custom_data,
+            )
+        return await self._submit_payload(payload)
+
+    async def send_image_message(
+        self,
+        to_number: str,
+        image_url: str,
+        caption: str,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> ExotelAcceptedMessage:
+        """Submit one approved remote image through the normal endpoint."""
+        payload = self.build_image_payload(
+            to_number=to_number, image_url=image_url, caption=caption,
+            status_callback=status_callback, custom_data=custom_data,
+        )
+        return await self._submit_payload(payload)
+
+    async def send_video_message(
+        self,
+        to_number: str,
+        video_url: str,
+        caption: str,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> ExotelAcceptedMessage:
+        """Submit one approved remote video through the normal endpoint."""
+        payload = self.build_video_payload(
+            to_number=to_number, video_url=video_url, caption=caption,
+            status_callback=status_callback, custom_data=custom_data,
+        )
+        return await self._submit_payload(payload)
+
+    async def send_document_message(
+        self, to_number: str, document_url: str, caption: str, filename: str,
+        status_callback: str | None = None, custom_data: str | None = None,
+    ) -> ExotelAcceptedMessage:
+        """Submit one remote PDF document through the normal endpoint."""
+        payload = self.build_document_payload(
+            to_number=to_number, document_url=document_url, caption=caption, filename=filename,
+            status_callback=status_callback, custom_data=custom_data,
+        )
+        return await self._submit_payload(payload)
+
+    async def send_template_message(
+        self,
+        to_number: str,
+        template: TemplateMessage,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> ExotelAcceptedMessage:
+        """Submit one pre-approved WhatsApp template through the normal endpoint."""
+        payload = self.build_template_payload(
+            to_number=to_number, template=template,
+            status_callback=status_callback, custom_data=custom_data,
+        )
+        return await self._submit_payload(payload)
+
+    async def _submit_payload(self, payload: dict[str, Any]) -> ExotelAcceptedMessage:
+        """Use identical acceptance/error semantics for text and interactive sends."""
+        started = perf_counter()
+        logger.info("exotel_send_started operation=exotel_send")
         try:
-            response = await self._client().post(self._endpoint_url(), json=payload)
+            with latency_stage("Exotel_HTTP_request"):
+                response = await self._client().post(self._endpoint_url(), json=payload)
         except httpx.TimeoutException as error:
             _log_transport_failure(payload, self._endpoint_url(), bool(self._api_key and self._api_token))
             raise ExotelTimeoutError from error
@@ -159,7 +247,94 @@ class ExotelClient:
             message_entry_keys,
             data_keys,
         )
+        logger.info(
+            "exotel_send_completed duration_ms=%.3f http_status=202 provider_sid_present=true status=provider_accepted",
+            (perf_counter() - started) * 1000,
+        )
         return ExotelAcceptedMessage(provider_message_id=provider_message_id)
+
+    def build_interactive_payload(
+        self,
+        *,
+        to_number: str,
+        interactive: InteractiveMessage,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> dict[str, Any]:
+        if interactive.kind == "buttons":
+            if not 1 <= len(interactive.options) <= 3:
+                raise ExotelValidationError("interactive_buttons_require_one_to_three_options")
+            provider_interactive = {
+                "type": "button", "body": {"text": interactive.body},
+                "action": {"buttons": [
+                    {"type": "reply", "reply": {"id": option.id, "title": option.title}}
+                    for option in interactive.options
+                ]},
+            }
+        elif interactive.kind == "list":
+            if not interactive.options:
+                raise ExotelValidationError("interactive_list_requires_options")
+            provider_interactive: dict[str, Any] = {
+                "type": "list",
+                "body": {"text": interactive.body},
+                "action": {
+                    "button": interactive.button_label,
+                    "sections": [{
+                        "title": interactive.button_label,
+                        "rows": [
+                            {key: value for key, value in {
+                                "id": option.id, "title": option.title, "description": option.description,
+                            }.items() if value is not None}
+                            for option in interactive.options
+                        ],
+                    }],
+                },
+            }
+        elif interactive.kind == "flow" and interactive.flow_id:
+            provider_interactive = {
+                "type": "flow",
+                "body": {"text": interactive.body},
+                "action": {
+                    "name": "flow",
+                    "parameters": {
+                        "mode": "published",
+                        "flow_message_version": "3",
+                        "flow_token": interactive.flow_token or "entartica_flow",
+                        "flow_id": interactive.flow_id,
+                        "flow_cta": interactive.flow_cta or interactive.button_label,
+                        "flow_action": "navigate",
+                        **(
+                            {"flow_action_payload": {"screen": interactive.flow_screen_id}}
+                            if interactive.flow_screen_id
+                            else {}
+                        ),
+                    },
+                },
+            }
+        else:
+            raise ExotelValidationError("interactive_flow_configuration_missing")
+        if interactive.header_image_url is not None:
+            if not interactive.header_image_url.startswith("https://"):
+                raise ExotelValidationError("interactive_image_requires_https_url")
+            provider_interactive["header"] = {
+                "type": "image", "image": {"link": interactive.header_image_url},
+            }
+        message: dict[str, Any] = {
+            "from": self._whatsapp_from, "to": to_number,
+            "content": {"type": "interactive", "interactive": provider_interactive},
+        }
+        if custom_data is not None:
+            message["custom_data"] = custom_data
+        payload: dict[str, Any] = {"whatsapp": {"messages": [message]}}
+        if status_callback is not None:
+            payload["status_callback"] = status_callback
+        logger.info(
+            "provider_payload_has_body=%s provider_payload_has_media=%s provider_payload_action_count=%s "
+            "package_interactive_type=%s",
+            bool(interactive.body.strip()), interactive.header_image_url is not None,
+            len(interactive.options), interactive.kind,
+        )
+        return payload
 
     def build_text_payload(
         self,
@@ -177,6 +352,114 @@ class ExotelClient:
             payload["status_callback"] = status_callback
         if custom_data is not None:
             message["custom_data"] = custom_data
+        return payload
+
+    def build_image_payload(
+        self,
+        *,
+        to_number: str,
+        image_url: str,
+        caption: str,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(image_url, str) or not image_url.startswith("https://"):
+            raise ExotelValidationError("image_requires_https_url")
+        if not isinstance(caption, str) or not caption.strip():
+            raise ExotelValidationError("image_requires_caption")
+        message: dict[str, Any] = {
+            "from": self._whatsapp_from, "to": to_number,
+            "content": {"type": "image", "image": {"link": image_url, "caption": caption}},
+        }
+        if custom_data is not None:
+            message["custom_data"] = custom_data
+        payload: dict[str, Any] = {"whatsapp": {"messages": [message]}}
+        if status_callback is not None:
+            payload["status_callback"] = status_callback
+        return payload
+
+    def build_video_payload(
+        self,
+        *,
+        to_number: str,
+        video_url: str,
+        caption: str,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(video_url, str) or not video_url.startswith("https://"):
+            raise ExotelValidationError("video_requires_https_url")
+        if not isinstance(caption, str) or not caption.strip():
+            raise ExotelValidationError("video_requires_caption")
+        message: dict[str, Any] = {
+            "from": self._whatsapp_from, "to": to_number,
+            "content": {"type": "video", "video": {"link": video_url, "caption": caption}},
+        }
+        if custom_data is not None:
+            message["custom_data"] = custom_data
+        payload: dict[str, Any] = {"whatsapp": {"messages": [message]}}
+        if status_callback is not None:
+            payload["status_callback"] = status_callback
+        return payload
+
+    def build_document_payload(
+        self, *, to_number: str, document_url: str, caption: str, filename: str,
+        status_callback: str | None = None, custom_data: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(document_url, str) or not document_url.startswith("https://"):
+            raise ExotelValidationError("document_requires_https_url")
+        if not isinstance(caption, str) or not caption.strip():
+            raise ExotelValidationError("document_requires_caption")
+        if not isinstance(filename, str) or not filename.lower().endswith(".pdf"):
+            raise ExotelValidationError("document_requires_pdf_filename")
+        message: dict[str, Any] = {
+            "from": self._whatsapp_from, "to": to_number,
+            "content": {"type":"document", "document":{
+                "link":document_url, "caption":caption, "filename":filename,
+            }},
+        }
+        if custom_data is not None: message["custom_data"] = custom_data
+        payload: dict[str, Any] = {"whatsapp":{"messages":[message]}}
+        if status_callback is not None: payload["status_callback"] = status_callback
+        return payload
+
+    def build_template_payload(
+        self,
+        *,
+        to_number: str,
+        template: TemplateMessage,
+        status_callback: str | None = None,
+        custom_data: str | None = None,
+    ) -> dict[str, Any]:
+        if not template.name.strip() or not template.language.strip():
+            raise ExotelValidationError("template_identity_required")
+        if not template.header_image_url.startswith("https://"):
+            raise ExotelValidationError("template_image_requires_https_url")
+        if not template.approved_package or template.service_code != "pontoon_celebration":
+            raise ExotelValidationError("template_not_approved_for_service")
+        message: dict[str, Any] = {
+            "from": self._whatsapp_from,
+            "to": to_number,
+            "content": {
+                "recipient_type": "individual",
+                "type": "template",
+                "template": {
+                    "name": template.name,
+                    "language": {"code": template.language, "policy": "deterministic"},
+                    "components": [{
+                        "type": "header",
+                        "parameters": [{
+                            "type": "image", "image": {"link": template.header_image_url},
+                        }],
+                    }],
+                },
+            },
+        }
+        if custom_data is not None:
+            message["custom_data"] = custom_data
+        payload: dict[str, Any] = {"whatsapp": {"messages": [message]}}
+        if status_callback is not None:
+            payload["status_callback"] = status_callback
         return payload
 
     def endpoint_pattern(self) -> str:
@@ -654,7 +937,7 @@ def _callback_status(entry: dict[str, Any]) -> str | None:
     value = entry.get("exo_detailed_status") or entry.get("status")
     if isinstance(value, str):
         mapped = {
-            "accepted": "sent", "sent": "sent", "ex_message_sent": "sent",
+            "accepted": "accepted", "sent": "sent", "ex_message_sent": "sent",
             "delivered": "delivered", "ex_message_delivered": "delivered",
             "read": "read", "seen": "read", "ex_message_seen": "read",
             "failed": "failed", "failure": "failed",
@@ -737,8 +1020,7 @@ def _normalize_whatsapp_message(
     business_number = _normalize_phone(message.to)
     message_type = _message_type_from_content(message.content)
     content = _content_from_message(message.content, message_type)
-    if message_type == "flow":
-        _parse_flow_response_json(message.content)
+    form_response = _parse_flow_response_json(message.content) if message_type == "flow" else None
 
     return NormalizedInboundMessage(
         external_message_id=message.sid
@@ -755,6 +1037,7 @@ def _normalize_whatsapp_message(
         profile_name=message.profile_name,
         message_type=message_type,
         content=content,
+        form_response=form_response,
         received_at=_as_utc(message.timestamp),
     )
 
@@ -772,8 +1055,11 @@ def _message_type_from_content(content: dict[str, Any]) -> str:
         return "text"
     if value == "interactive":
         interactive = content.get("interactive")
-        if isinstance(interactive, dict) and interactive.get("type") == "flow":
-            return "flow"
+        if isinstance(interactive, dict):
+            if interactive.get("type") in {"flow", "nfm_reply"}:
+                return "flow"
+            if interactive.get("type") in {"list_reply", "button_reply"}:
+                return "text"
     return "other"
 
 
@@ -783,6 +1069,22 @@ def _content_from_message(content: dict[str, Any], message_type: str) -> str | N
         if isinstance(text, dict):
             body = text.get("body")
             return body if isinstance(body, str) else None
+        interactive = content.get("interactive")
+        if isinstance(interactive, dict):
+            reply = interactive.get(interactive.get("type"))
+            if isinstance(reply, dict):
+                identifier = reply.get("id")
+                title = reply.get("title")
+                if isinstance(identifier, str) and identifier.strip():
+                    canonical_selections = {
+                        "celebration_floating_gazebo": "Floating Gazebo",
+                        "celebration_houseboat": "Houseboat Celebration",
+                        "celebration_jetty_gazebo": "Jetty Gazebo",
+                        "celebration_party_boat": "Party Boat Celebration",
+                        "celebration_pontoon": "Pontoon Boat Celebration",
+                    }
+                    return canonical_selections.get(identifier.strip().casefold(), identifier)
+                return title if isinstance(title, str) else None
     if message_type == "flow":
         interactive = content.get("interactive")
         if isinstance(interactive, dict):

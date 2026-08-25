@@ -18,7 +18,7 @@ class _Knowledge:
     def answer_service_details(self, _question, service_name):
         self.calls += 1
         if service_name == "Party Boat Celebration":
-            return KnowledgeDraft("Party Boat Celebration is at Entartica Sea World, Raipur, on Jhanjh Lake. The approved duration is 1 hour and it can accommodate up to 50 guests.", "party_boat_celebration.md", .8, False)
+            return KnowledgeDraft("Party Boat Celebration is at Entartica Sea World, Raipur, on Jhanjh Lake. The approved duration is 2 hours and it can accommodate up to 50 guests.", "party_boat_celebration.md", .8, False)
         return KnowledgeDraft(None)
 
 
@@ -122,7 +122,7 @@ def test_party_boat_switch_returns_active_detail_and_replaces_houseboat_context(
     assert party.detected_intent == "celebration_service_detail"
     assert party.context.last_service_code == "party_boat_celebration"
     assert party.context.service_selection_prompted is False
-    assert all(fact in party.draft_text for fact in ("Jhanjh Lake", "1 hour", "50 guests"))
+    assert all(fact in party.draft_text for fact in ("Jhanjh Lake", "2 hours", "50 guests"))
     assert "Yes, Party Boat Celebration is offered" not in party.draft_text
     assert "Party Boat Celebration" in follow_up.draft_text
     assert all(term not in party.draft_text.casefold() for term in ("price", "availability", "booking is confirmed"))

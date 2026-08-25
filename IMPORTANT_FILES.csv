@@ -1,0 +1,26 @@
+path,purpose,status,important_functions_or_classes,dependencies,safe_to_modify,notes
+app/main.py,FastAPI app and startup readiness,implemented,create_app;verify_supabase_readiness,FastAPI Supabase,yes,Startup check logs safe result only
+app/api/exotel_webhook.py,Inbound Exotel acknowledgement and background processing,implemented,receive_inbound_message;process_inbound_messages_background,FastAPI Exotel Supabase,carefully,Process-local customer lock only
+app/api/status_webhook.py,Exotel delivery callback route,implemented,receive_delivery_status,Exotel delivery service,carefully,Exact SID matching
+app/integrations/exotel.py,Outbound payload/client,implemented,ExotelClient,HTTPX Exotel,carefully,Nested WhatsApp payload
+app/integrations/supabase.py,Server Supabase client/readiness,implemented,get_supabase_client;log_startup_readiness,Supabase Settings,carefully,Uses SUPABASE_SECRET_KEY
+app/services/inbound_messages.py,Customer conversation and inbound persistence,implemented,InboundMessageService.process,repositories,carefully,Duplicate handling follows persistence
+app/services/raipur_inbound_orchestrator.py,Main post-persistence Raipur controller,implemented,RaipurInboundOrchestrator.process,routing context formatter,carefully,Final formatter boundary
+app/services/raipur_conversation.py,Legacy deterministic conversation flow,implemented,RaipurConversationService;ConversationContext,knowledge bookings drafts,carefully,Feature flag can select legacy engine
+app/services/raipur_langgraph.py,LangGraph routing workflow,implemented,RaipurLangGraphWorkflow;MessagePlan,LangGraph knowledge,carefully,Optional feature flag
+app/rag/retrieval.py,Embedding and candidate RPC retrieval,implemented,embed_query;retrieve_candidates,OpenAI Supabase,carefully,No script imports
+app/rag/raipur_knowledge_provider.py,Approved Raipur knowledge adapter,implemented,RaipurKnowledgeProvider,embedding retrieval composition,carefully,Exact-section-first topic fallback
+app/services/whatsapp_response_formatter.py,Central customer presentation layer,uncommitted,format_whatsapp_response;validate_whatsapp_response,orchestrator,yes,Does not retrieve or change facts
+app/services/raipur_draft_sender.py,Durable approved-draft sender,implemented,RaipurDraftSender,Exotel drafts,carefully,Claims/reconciliation prevent duplicate sends
+app/repositories/outbound_drafts.py,Outbound draft persistence/lifecycle,implemented,claim/complete/reconcile methods,Supabase,carefully,Migration 012 related
+app/services/raipur_automatic_replies.py,Automatic reply eligibility,implemented,attempt_automatic_reply,sender drafts settings,carefully,Flags default disabled
+app/config.py,Typed configuration,implemented,Settings;get_settings,pydantic-settings,carefully,Do not put secrets in code
+documents/raipur,Approved local Raipur knowledge,implemented,manifest/frontmatter,ingestion,no,Do not edit without content approval
+supabase/migrations,Schema migration history,implemented,001-014,Supabase,no,Do not apply without approval
+scripts/ingest_raipur_knowledge.py,Approved knowledge ingestion,implemented,main,OpenAI Supabase,no,Use dry run before live ingestion
+tests/test_exotel_webhook.py,Webhook tests,implemented,webhook fakes,pytest,yes,No live providers
+tests/test_raipur_langgraph_orchestrator.py,Graph/orchestrator tests,implemented,route/context tests,pytest,yes,Updated for formatter presentation
+tests/test_raipur_knowledge_provider.py,Knowledge provider tests,implemented,retrieval/ranking tests,pytest,yes,Fake OpenAI/Supabase
+tests/test_whatsapp_response_formatter.py,Formatter tests,uncommitted,format/validation tests,pytest,yes,Focused presentation coverage
+requirements.txt,Python dependency constraints,implemented,FastAPI/OpenAI/LangGraph/Supabase,Python,carefully,OpenAI pinned 2.46.0 LangGraph pinned 0.6.6
+.env.example,Environment variable names/defaults,implemented,settings contract,environment,carefully,Contains no secrets

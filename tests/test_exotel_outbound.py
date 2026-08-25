@@ -21,6 +21,78 @@ from app.services.outbound_messages import (
     OutboundMessageService,
     OutboundMessagingDisabledError,
 )
+from app.schemas.interactive_messages import InteractiveMessage, InteractiveOption, customer_details_flow
+from app.services.latency import LatencyTrace, use_latency_trace
+
+
+def test_customer_details_flow_payload_uses_published_mode_and_first_screen() -> None:
+    interactive = customer_details_flow(
+        flow_id="27532617159750529",
+        flow_token="opaque-conversation-token",
+    )
+
+    payload = _client(lambda request: httpx.Response(202)).build_interactive_payload(
+        to_number="+919000000000", interactive=interactive,
+    )
+
+    parameters = payload["whatsapp"]["messages"][0]["content"]["interactive"]["action"]["parameters"]
+    assert parameters == {
+        "mode": "published",
+        "flow_message_version": "3",
+        "flow_token": "opaque-conversation-token",
+        "flow_id": "27532617159750529",
+        "flow_cta": "Complete Details",
+        "flow_action": "navigate",
+        "flow_action_payload": {"screen": "CUSTOMER_DETAILS"},
+    }
+
+
+def test_standard_package_provider_payload_is_one_image_header_body_and_four_row_list() -> None:
+    image_url = "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_Coimbtore.jpg"
+    body = (
+        "Pontoon Boat Celebration Package ✨\n\n"
+        "📅 Event Date: 22 Aug 2026\n👥 Guests: 5\n\n"
+        "🎉 Inclusions:\n• Red Carpet Welcome\n• 02 Cold Pyro Entry\n• Cake\n"
+        "• Music Setup\n• Decoration\n• Cake cutting in the middle of the serene lake\n"
+        "• 30 Minutes Premium Boat Ride\n\n💰 Rack Rate: ₹5,999\n"
+        "😍 Offer / Discounted Rate: ₹4,999\n🔒 Pay a token of ₹1,000\n\nAPPROVED ADD-ONS"
+    )
+    interactive = InteractiveMessage(
+        kind="list", body=body, fallback_text=body, button_label="Package Actions",
+        options=tuple(InteractiveOption(identifier, title) for identifier, title in (
+            ("coimbatore_pontoon_book_standard", "Book Now"),
+            ("coimbatore_pontoon_ask_question", "Ask a Question"),
+            ("coimbatore_pontoon_customize", "Customize"),
+            ("coimbatore_pontoon_more_photos", "See Photo & Video"),
+        )),
+        header_image_url=image_url,
+    )
+    payload = _client(lambda request: httpx.Response(202)).build_interactive_payload(
+        to_number="+919000000000", interactive=interactive,
+    )
+    messages = payload["whatsapp"]["messages"]
+    assert len(messages) == 1
+    provider = messages[0]["content"]["interactive"]
+    assert messages[0]["content"]["type"] == "interactive"
+    assert provider["type"] == "list"
+    assert provider["header"] == {"type": "image", "image": {"link": image_url}}
+    assert provider["body"]["text"] == body
+    assert len(provider["action"]["sections"][0]["rows"]) == 4
+    assert provider["body"]["text"] != "What would you like to do next?"
+
+
+def test_mocked_two_second_exotel_delay_is_attributed_to_http_stage() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(2)
+        return httpx.Response(202, json={"response":{"whatsapp":{"messages":[
+            {"code":202, "status":"success", "data":{"sid":"delayed-provider-sid"}}
+        ]}}})
+
+    trace = LatencyTrace(request_id="delayed-exotel")
+    with use_latency_trace(trace):
+        result = asyncio.run(_client(handler).send_text_message("+919000000000", "Approved text"))
+    assert result.provider_message_id == "delayed-provider-sid"
+    assert 1900 <= trace.stages_ms["Exotel_HTTP_request"] < 2600
 
 
 def _client(handler) -> ExotelClient:
@@ -68,6 +140,27 @@ def test_send_text_message_accepts_202_and_parses_sid(caplog) -> None:
     assert "+919000000000" not in caplog.text
     assert "private message" not in caplog.text
     assert "token" not in caplog.text
+
+
+def test_send_text_message_keeps_unicode_catalogue_text_as_json_string(caplog) -> None:
+    text = "\u2022 Floating Gazebo\n\u2022 Houseboat Celebration\n\u20b9 \u0928\u092e\u0938\u094d\u0924\u0947"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["content-type"] == "application/json"
+        assert isinstance(request.content, bytes)
+        body = request.content.decode("utf-8")
+        assert "\u2022 Floating Gazebo" in body
+        assert "\u00e2\u20ac\u00a2" not in body
+        assert __import__("json").loads(body)["whatsapp"]["messages"][0]["content"]["text"]["body"] == text
+        return httpx.Response(202, json={"response": {"whatsapp": {"messages": [{"code": 202, "status": "success", "data": {"sid": "provider-1"}}]}}})
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        result = asyncio.run(_client(handler).send_text_message("+919000000000", text))
+
+    assert result.provider_message_id == "provider-1"
+    trace = next(message for message in caplog.messages if "event=outbound_unicode_trace" in message)
+    assert "contains_mojibake=False" in trace
+    assert "contains_unicode_bullet=True" in trace
 
 
 @pytest.mark.parametrize(
@@ -393,6 +486,63 @@ def test_minimal_diagnostic_payload_omits_optional_fields() -> None:
     assert messages[0]["content"]["text"]["body"] == "diagnostic"
     assert "status_callback" not in payload
     assert "custom_data" not in messages[0]
+
+
+def test_image_payload_uses_exotel_image_content_with_link_and_caption() -> None:
+    payload = _client(lambda request: httpx.Response(202)).build_image_payload(
+        to_number="+919000000000",
+        image_url="https://example.test/pontoon.jpg",
+        caption="Approved Pontoon package",
+        status_callback="https://example.test/status",
+        custom_data="draft-safe",
+    )
+
+    message = payload["whatsapp"]["messages"][0]
+    assert message["content"] == {
+        "type": "image",
+        "image": {"link": "https://example.test/pontoon.jpg", "caption": "Approved Pontoon package"},
+    }
+    assert message["custom_data"] == "draft-safe"
+    assert payload["status_callback"] == "https://example.test/status"
+
+
+def test_document_payload_uses_exotel_pdf_content_with_filename_and_caption() -> None:
+    payload = _client(lambda request: httpx.Response(202)).build_document_payload(
+        to_number="+919000000000", document_url="https://signed.example/confirmation.pdf",
+        caption="Booking confirmed", filename="Entartica-CBE-1.pdf",
+        status_callback="https://example.test/status", custom_data="draft-safe-document",
+    )
+    message = payload["whatsapp"]["messages"][0]
+    assert message["content"] == {"type":"document", "document":{
+        "link":"https://signed.example/confirmation.pdf", "caption":"Booking confirmed",
+        "filename":"Entartica-CBE-1.pdf",
+    }}
+    assert message["custom_data"] == "draft-safe-document"
+
+
+def test_pontoon_template_payload_uses_one_template_with_dynamic_image_header() -> None:
+    from app.schemas.template_messages import TemplateMessage
+
+    template = TemplateMessage(
+        name="approved_pontoon_template", language="en",
+        header_image_url="https://example.test/pontoon.jpg", flow_id="approved-flow",
+        flow_cta="Share Event Details", service_code="pontoon_celebration",
+        package_source_file="active/services/pontoon_celebration.md",
+    )
+    payload = _client(lambda request: httpx.Response(202)).build_template_payload(
+        to_number="+919000000000", template=template,
+    )
+    message = payload["whatsapp"]["messages"][0]
+    assert message["content"]["type"] == "template"
+    assert message["content"]["template"] == {
+        "name": "approved_pontoon_template",
+        "language": {"code": "en", "policy": "deterministic"},
+        "components": [{
+            "type": "header",
+            "parameters": [{"type": "image", "image": {"link": "https://example.test/pontoon.jpg"}}],
+        }],
+    }
+    assert "interactive" not in message["content"]
 
 
 def test_outbound_service_is_disabled_by_default() -> None:

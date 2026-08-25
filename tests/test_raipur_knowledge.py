@@ -42,7 +42,7 @@ def test_canonical_manifest_documents_have_required_active_metadata() -> None:
     documents = [row.document for row in plan if row.document is not None]
 
     assert not errors
-    assert len(documents) == 20
+    assert len(documents) == 23
     for document in documents:
         assert document.metadata["location_code"] == "raipur"
         assert document.metadata["approval_status"] == "approved"

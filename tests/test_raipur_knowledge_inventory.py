@@ -16,11 +16,11 @@ def test_inventory_classifies_every_raipur_file_and_only_manifest_rows_are_eligi
     assert all(row["final_action"] for row in inventory)
     assert all(row["final_action"] != "pending_management_confirmation" for row in inventory)
     active = [row for row in inventory if row["ready_for_ingestion"] == "true"]
-    assert len(active) == 20
+    assert len(active) == 23
     assert all(row["final_action"] == "activate_and_ingest" for row in active)
     assert all(row["final_action"] == "keep_internal" for row in inventory if "structured_data/" in row["file_path"])
     assert all(row["final_action"] == "archive_obsolete" for row in inventory if row["file_path"].startswith("archive/"))
-    assert len(coverage) == 16
+    assert len(coverage) == 19
 
 
 def test_inventory_marks_only_matching_database_source_files_as_active() -> None:

@@ -72,12 +72,52 @@ class Repo:
 
 
 class Exotel:
-    def __init__(self, result=None, error: Exception | None = None):
+    def __init__(self, result=None, error: Exception | None = None, image_error: Exception | None = None):
         self.result = result or ExotelAcceptedMessage(provider_message_id="sid-safe")
         self.error = error
+        self.image_error = image_error
         self.calls: list[tuple] = []
+        self.call_types: list[str] = []
 
     async def send_text_message(self, *args):
+        self.call_types.append("text")
+        self.calls.append(args)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def send_interactive_message(self, *args):
+        self.call_types.append("interactive")
+        self.calls.append(args)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def send_image_message(self, *args):
+        self.call_types.append("image")
+        self.calls.append(args)
+        if self.image_error is not None:
+            raise self.image_error
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def send_video_message(self, *args):
+        self.call_types.append("video")
+        self.calls.append(args)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def send_document_message(self, *args):
+        self.call_types.append("document")
+        self.calls.append(args)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def send_template_message(self, *args):
+        self.call_types.append("template")
         self.calls.append(args)
         if self.error is not None:
             raise self.error
@@ -135,6 +175,207 @@ def test_accepted_response_completes_matching_claim_without_regenerating_text():
     assert repository.row["draft_status"] == "sent"
     assert repository.row["delivery_status"] == "accepted"
     assert repository.row["sent_at"] == "fake-now"
+
+
+def test_approved_interactive_draft_uses_the_same_claimed_send_path():
+    interactive = {
+        "kind": "list", "body": "Approved options", "fallback_text": "Approved options",
+        "button_label": "Choose Celebration", "options": [
+            {"id": "celebration_floating_gazebo", "title": "Floating Gazebo", "description": None}
+        ], "flow_id": None, "flow_token": None, "flow_cta": None, "flow_type": None,
+    }
+    repository, exotel = Repo(row(draft_metadata={"response_valid": True, "interactive_message": interactive})), Exotel()
+    result = _send(repository, exotel)
+    assert result.reason == "completed" and len(exotel.calls) == 1
+    assert exotel.calls[0][1].kind == "list"
+    assert exotel.calls[0][1].options[0].id == "celebration_floating_gazebo"
+
+
+def test_customer_details_flow_keeps_published_id_token_and_screen_through_durable_sender():
+    interactive = {
+        "kind": "flow",
+        "body": "Hi 👋 Welcome to Entartica Coimbatore!",
+        "fallback_text": "Please tap Complete Details to continue.",
+        "button_label": "Complete Details",
+        "options": [],
+        "flow_id": "27532617159750529",
+        "flow_token": "secure-random-token-from-inbound-conversation",
+        "flow_cta": "Complete Details",
+        "flow_screen_id": "CUSTOMER_DETAILS",
+        "flow_type": "customer_details",
+    }
+    repository = Repo(row(draft_metadata={
+        "response_valid": True,
+        "interactive_message": interactive,
+    }))
+    exotel = Exotel()
+
+    result = _send(repository, exotel)
+
+    assert result.reason == "completed"
+    assert exotel.call_types == ["interactive"]
+    sent_to, sent_flow = exotel.calls[0][0], exotel.calls[0][1]
+    assert sent_to == "+910000000000"
+    assert sent_flow.flow_id == "27532617159750529"
+    assert sent_flow.flow_token == "secure-random-token-from-inbound-conversation"
+    assert sent_flow.flow_screen_id == "CUSTOMER_DETAILS"
+    assert sent_flow.flow_type == "customer_details"
+
+
+def test_approved_document_draft_uses_claimed_send_path():
+    document = {"type":"document", "url":"https://signed.example/confirmation.pdf",
+                "caption":"Booking confirmed", "filename":"Entartica-CBE-1.pdf"}
+    repository = Repo(row(draft_metadata={"response_valid":True, "document_message":document}))
+    exotel = Exotel()
+    result = _send(repository, exotel)
+    assert result.reason == "completed" and exotel.call_types == ["document"]
+    assert exotel.calls[0][1:4] == (document["url"], document["caption"], document["filename"])
+
+
+def test_approved_image_draft_sends_image_then_qualification_text_under_one_claim():
+    media = {"type": "image", "url": "https://example.test/pontoon.jpg", "caption": "Approved package"}
+    repository = Repo(row(content="What date and how many persons?", draft_metadata={"response_valid": True, "media_message": media}))
+    exotel = Exotel()
+    result = _send(repository, exotel)
+
+    assert result.reason == "completed"
+    assert exotel.call_types == ["image", "text"]
+    assert exotel.calls[0][1:3] == (media["url"], media["caption"])
+    assert exotel.calls[1][1] == "What date and how many persons?"
+    assert repository.row["send_attempt_state"] == "completed"
+
+
+def test_approved_pontoon_bundle_sends_image_then_flow_under_one_claim():
+    media = {"type": "image", "url": "https://example.test/pontoon.jpg", "caption": "Approved package"}
+    interactive = {
+        "kind": "flow", "body": "Pontoon Celebration Details", "fallback_text": "Share date and persons",
+        "button_label": "Share Celebration Details", "options": [], "flow_id": "configured-flow-id",
+        "flow_token": "entartica_pontoon_celebration", "flow_cta": "Share Celebration Details",
+        "flow_type": "pontoon_celebration",
+    }
+    repository = Repo(row(content="What date and how many persons?", draft_metadata={
+        "response_valid": True, "media_message": media, "interactive_message": interactive,
+    }))
+    exotel = Exotel()
+    assert _send(repository, exotel).reason == "completed"
+    assert exotel.call_types == ["image", "interactive"]
+    assert exotel.calls[1][1].flow_type == "pontoon_celebration"
+
+
+def test_coimbatore_package_sequence_sends_full_image_caption_before_four_action_list():
+    media = {"type":"image", "url":"https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_Coimbtore.jpg",
+             "caption":"Pontoon Boat Celebration Package ✨\nEvent Date: 21 Aug 2026\nGuests: 5\n₹5,999\n₹4,999\n₹1,000"}
+    interactive = {"kind":"list", "body":media["caption"], "fallback_text":media["caption"],
+                   "button_label":"Package Actions", "options":[
+                       {"id":"book", "title":"Book Now"}, {"id":"question", "title":"Ask a Question"},
+                       {"id":"customize", "title":"Customize"}, {"id":"photos", "title":"See More Photos"},
+                   ], "header_image_url":media["url"]}
+    repository = Repo(row(content=media["caption"], draft_metadata={"response_valid":True,
+        "package_id":"coimbatore_pontoon_standard", "package_presentation_pending":True,
+        "media_message":media, "interactive_message":interactive}))
+    exotel = Exotel()
+    result = _send(repository, exotel)
+    assert result.reason == "completed"
+    assert exotel.call_types == ["interactive"]
+    assert "Pontoon Boat Celebration Package" in exotel.calls[0][1].body
+    assert exotel.calls[0][1].header_image_url == media["url"]
+    assert len(exotel.calls[0][1].options) == 4
+
+
+def test_approved_pontoon_template_uses_exactly_one_provider_request():
+    template = {
+        "name": "approved_pontoon_template", "language": "en",
+        "header_image_url": "https://example.test/pontoon.jpg", "flow_id": "approved-flow",
+        "flow_cta": "Share Event Details", "service_code": "pontoon_celebration",
+        "package_source_file": "active/services/pontoon_celebration.md", "approved_package": True,
+    }
+    repository = Repo(row(content="Approved KB package", draft_metadata={
+        "response_valid": True, "template_message": template,
+    }))
+    exotel = Exotel()
+    assert _send(repository, exotel).reason == "completed"
+    assert exotel.call_types == ["template"]
+    assert exotel.calls[0][1].name == "approved_pontoon_template"
+
+
+def test_media_sequence_sends_one_interactive_cta_only_after_all_media():
+    media_sequence = [
+        {"type":"image", "url":"https://example.test/one.jpg", "caption":"Photo one"},
+        {"type":"image", "url":"https://example.test/two.jpg", "caption":"Photo two"},
+        {"type":"video", "url":"https://example.test/video.mp4", "caption":"Video"},
+    ]
+    interactive = {
+        "kind":"buttons", "body":"Ready to make it yours?", "fallback_text":"Ready to make it yours?",
+        "button_label":"Choose an option", "options":[
+            {"id":"coimbatore_pontoon_book_standard", "title":"Book Now"},
+            {"id":"coimbatore_pontoon_customize", "title":"Customize"},
+            {"id":"coimbatore_pontoon_ask_question", "title":"Ask a Question"},
+        ],
+    }
+    repository = Repo(row(draft_metadata={
+        "response_valid":True, "package_id":"coimbatore_pontoon_standard",
+        "media_sequence":media_sequence, "interactive_message":interactive,
+    }))
+    exotel = Exotel()
+
+    result = _send(repository, exotel)
+
+    assert result.reason == "completed"
+    assert exotel.call_types == ["image", "image", "video", "interactive"]
+    assert exotel.call_types.count("interactive") == 1
+    assert [option.title for option in exotel.calls[-1][1].options] == ["Book Now", "Customize", "Ask a Question"]
+    assert _send(repository, exotel).reason == "duplicate_send_prevented"
+    assert exotel.call_types == ["image", "image", "video", "interactive"]
+
+
+@pytest.mark.parametrize(
+    "error,expected_state,expected_reason",
+    [
+        (ExotelValidationError(), "provider_failed", "provider_rejected"),
+        (ExotelTimeoutError(), "reconciliation_required", "reconciliation_required"),
+    ],
+)
+def test_template_provider_failures_preserve_existing_claim_safety(error, expected_state, expected_reason):
+    template = {
+        "name": "approved_pontoon_template", "language": "en",
+        "header_image_url": "https://example.test/pontoon.jpg", "flow_id": "approved-flow",
+        "flow_cta": "Share Event Details", "service_code": "pontoon_celebration",
+        "package_source_file": "active/services/pontoon_celebration.md", "approved_package": True,
+    }
+    repository = Repo(row(content="Approved KB package", draft_metadata={
+        "response_valid": True, "template_message": template,
+    }))
+    exotel = Exotel(error=error)
+    assert _send(repository, exotel).reason == expected_reason
+    assert repository.row["send_attempt_state"] == expected_state
+    assert _send(repository, exotel).reason == "duplicate_send_prevented"
+    assert exotel.call_types == ["template"]
+
+
+def test_definite_image_rejection_falls_back_to_caption_then_qualification_text():
+    media = {"type": "image", "url": "https://example.test/pontoon.jpg", "caption": "Approved package"}
+    repository = Repo(row(content="What date?", draft_metadata={"response_valid": True, "media_message": media}))
+    exotel = Exotel(image_error=ExotelValidationError())
+    result = _send(repository, exotel)
+
+    assert result.reason == "completed"
+    assert exotel.call_types == ["image", "text", "text"]
+    assert [call[1] for call in exotel.calls[1:]] == ["Approved package", "What date?"]
+
+
+def test_failure_after_image_acceptance_requires_reconciliation_and_prevents_resend():
+    class PartialExotel(Exotel):
+        async def send_text_message(self, *args):
+            self.call_types.append("text")
+            self.calls.append(args)
+            raise ExotelValidationError()
+
+    media = {"type": "image", "url": "https://example.test/pontoon.jpg", "caption": "Approved package"}
+    repository = Repo(row(content="What date?", draft_metadata={"response_valid": True, "media_message": media}))
+    exotel = PartialExotel()
+    assert _send(repository, exotel).reason == "reconciliation_required"
+    assert _send(repository, exotel).reason == "duplicate_send_prevented"
+    assert exotel.call_types == ["image", "text"]
 
 
 @pytest.mark.parametrize("error", [ExotelValidationError(), __import__("app.integrations.exotel", fromlist=["ExotelAuthenticationError"]).ExotelAuthenticationError()])

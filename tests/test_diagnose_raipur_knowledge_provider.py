@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.services.raipur_conversation import KnowledgeDraft
+from app.services.raipur.response_models import KnowledgeDraft
 from scripts.diagnose_raipur_knowledge_provider import diagnose, print_result
 
 

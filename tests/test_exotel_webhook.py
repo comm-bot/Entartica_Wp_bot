@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -215,6 +217,49 @@ def test_duplicate_background_processing_skips_orchestration(monkeypatch) -> Non
     assert service.calls == 2 and orchestrator.calls == 1
 
 
+def test_orchestrator_dependency_graph_is_constructed_once(monkeypatch) -> None:
+    calls = []
+    client, settings = object(), object()
+    class Knowledge:
+        def __init__(self, received_client, received_settings):
+            assert (received_client, received_settings) == (client, settings)
+    class Orchestrator:
+        def __init__(self, received_client, received_settings, knowledge_provider=None):
+            calls.append("constructed")
+            assert received_client is client and received_settings is settings and isinstance(knowledge_provider, Knowledge)
+    from app.rag import raipur_knowledge_provider
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(exotel_webhook, "get_settings", lambda: settings)
+    monkeypatch.setattr(exotel_webhook, "RaipurInboundOrchestrator", Orchestrator)
+    monkeypatch.setattr(raipur_knowledge_provider, "RaipurKnowledgeProvider", Knowledge)
+    exotel_webhook.get_raipur_inbound_orchestrator.cache_clear()
+    first = exotel_webhook.get_raipur_inbound_orchestrator()
+    second = exotel_webhook.get_raipur_inbound_orchestrator()
+    assert first is second and calls == ["constructed"]
+    exotel_webhook.get_raipur_inbound_orchestrator.cache_clear()
+
+
+def test_rapid_same_customer_messages_remain_serialized(monkeypatch) -> None:
+    state = {"active": 0, "maximum": 0, "order": []}
+    class Service:
+        def process(self, message):
+            state["active"] += 1; state["maximum"] = max(state["maximum"], state["active"])
+            state["order"].append(message.external_message_id); time.sleep(0.02); state["active"] -= 1
+            return InboundMessageResult(False, {"id": "customer"}, {"id": "conversation"}, {"id": message.external_message_id})
+    configured = _settings()
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    first = exotel_webhook.normalize_exotel_payload(_payload())[0]
+    second_payload = _payload(); second_payload["whatsapp"]["messages"][0]["sid"] = "message-2"
+    second = exotel_webhook.normalize_exotel_payload(second_payload)[0]
+    async def run():
+        await asyncio.gather(
+            exotel_webhook.process_inbound_messages_background([first], configured),
+            exotel_webhook.process_inbound_messages_background([second], configured),
+        )
+    asyncio.run(run())
+    assert state["maximum"] == 1 and state["order"] == ["message-1", "message-2"]
+
+
 def test_background_automatic_reply_uses_existing_sender_only_when_enabled(monkeypatch) -> None:
     class Service:
         def process(self, _message): return InboundMessageResult(False, {"id": "customer"}, {"id": "conversation"}, {"id": "inbound"})
@@ -256,3 +301,27 @@ def test_background_automatic_reply_uses_existing_sender_only_when_enabled(monke
     repository.row.update(draft_status="pending_review", sent_at=None, external_message_id=None)
     asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
     assert sender.calls == 1
+
+
+def test_actual_background_path_emits_safe_raipur_runtime_trace(monkeypatch, caplog) -> None:
+    class Service:
+        def process(self, _message): return InboundMessageResult(False, {"id": "customer"}, {"id": "conversation"}, {"id": "inbound"})
+    orchestration = SimpleNamespace(
+        action="answer_information", reason_code="approved_service_detail", response_valid=True,
+        human_handover_required=False, draft_text="Approved Jet Ski overview.", detected_intent="service_overview",
+        safe_metadata={"graph_answer_source": "answer_service_knowledge", "service_code": "jet_ski_ride", "topic": "overview", "answer_source": "provider_composition", "response_basis": "active_rag"},
+    )
+    class Orchestrator:
+        def process(self, *_args, **_kwargs): return orchestration
+    configured = _settings(); configured.raipur_inbound_orchestrator_enabled = True
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: object())
+    monkeypatch.setattr(exotel_webhook, "OutboundDraftRepository", lambda _client: object())
+    monkeypatch.setattr(exotel_webhook, "create_draft_after_orchestration", lambda **_kwargs: SimpleNamespace(draft_saved=False, reason_code="draft_created"))
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        asyncio.run(exotel_webhook.process_inbound_messages_background([exotel_webhook.normalize_exotel_payload(_payload())[0]], configured))
+    trace = next(item for item in caplog.messages if "raipur_runtime_trace" in item)
+    assert "service_code=jet_ski_ride" in trace and "answer_service_knowledge" in trace
+    assert "+919000000000" not in trace and "response_character_count=26" in trace
+    assert "Approved Jet Ski overview." not in trace

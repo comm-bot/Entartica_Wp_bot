@@ -60,7 +60,10 @@ async def receive_delivery_status(request: Request) -> Response:
     try:
         callbacks = normalize_delivery_callbacks(payload)
         if not callbacks:
-            logger.info("exotel_event_skipped endpoint=status")
+            logger.info(
+                "exotel_event_skipped endpoint=status reason=no_supported_dlr "
+                "status_processed=false"
+            )
             return Response(status_code=200)
         service = get_delivery_status_service()
         for callback in callbacks:
@@ -69,7 +72,14 @@ async def receive_delivery_status(request: Request) -> Response:
                 continue
             with trace.stage("duplicate_check"):
                 updated = await run_in_threadpool(service.process, callback)
-            logger.info("exotel_status_callback_%s request_id=%s", "processed" if updated else "duplicate", trace.request_id)
+            logger.info(
+                "exotel_status_callback request_id=%s provider_sid=%s status_event_type=%s "
+                "status_transition=%s status_reason=%s status_processed=%s",
+                trace.request_id, callback.provider_message_id, callback.status,
+                callback.status if updated else "unchanged",
+                "forward_transition" if updated else "duplicate_irrelevant_or_unknown_sid",
+                str(updated).lower(),
+            )
     except Exception:
         logger.error("exotel_status_callback_processing_failed_safe request_id=%s", trace.request_id)
     trace.summary(intent="delivery_status", response_mode="callback", response_basis="none")

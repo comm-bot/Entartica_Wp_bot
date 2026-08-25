@@ -2,9 +2,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.schemas.exotel_webhook import NormalizedInboundMessage
 from app.services.booking_enquiries import BookingDetails
-from app.services.raipur_conversation import ConversationContext, KnowledgeDraft
+from app.services.raipur.response_models import ConversationContext, KnowledgeDraft
 from app.services.raipur_automatic_replies import eligible_for_automatic_reply
 import app.services.raipur_inbound_orchestrator as module
 
@@ -28,7 +30,12 @@ class _Services:
     def __init__(self, _client): pass
 
     def list_active_for_location(self, _location_id):
-        return [{"name": "Speed Boat"}, {"name": "Kayak"}, {"name": "Jet Ski"}]
+        return [
+            {"name": "Speed Boat"}, {"name": "Kayak"}, {"name": "Jet Ski"},
+            {"name": "Pontoon Celebration"}, {"name": "Floating Gazebo"},
+            {"name": "Jetty Gazebo"}, {"name": "Party Boat Celebration"}, {"name": "Houseboat Celebration"},
+            {"name": "Staycation Combo"}, {"name": "Daycation Package"},
+        ]
 
 
 class _Contexts:
@@ -87,9 +94,84 @@ def _process(orchestrator, text, context=None, *, customer_id="customer-id", con
     )
 
 
+def test_default_langgraph_path_executes_representative_messages_without_legacy_service(monkeypatch):
+    """Guard Phase 7: the live graph path must not construct legacy routing."""
+
+    class _ForbiddenLegacy:
+        def __init__(self, **_kwargs):
+            raise AssertionError("LangGraph constructed RaipurConversationService")
+
+    monkeypatch.setattr(module, "RaipurConversationService", _ForbiddenLegacy)
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+
+    greeting = _process(orchestrator, "Hello")
+    service = _process(orchestrator, "Tell me about Speed Boat")
+    family = _process(orchestrator, "What activities can families with kids do?")
+    celebration = _process(orchestrator, "I want to have a celebration")
+    celebration_followup = _process(
+        orchestrator, "12", context=module._context_to_record(celebration.context)
+    )
+    pricing = _process(orchestrator, "What is the Speed Boat price?")
+
+    assert greeting.detected_intent == "greeting"
+    assert service.safe_metadata["service_code"] == "speed_boat_ride"
+    assert family.detected_intent == "family_activity_discovery"
+    assert celebration.context.pending_clarification_type is None
+    assert celebration.context.pending_field == "total_guests"
+    assert celebration_followup.detected_intent == "celebration_guest_count"
+    assert celebration_followup.context.details.total_guests == 12
+    assert celebration_followup.context.pending_field == "preferred_date"
+    assert pricing.detected_intent == "pricing"
+    assert pricing.human_handover_required is True
+    assert all(
+        result.safe_metadata["active_engine"] == "langgraph"
+        for result in (greeting, service, family, celebration, celebration_followup, pricing)
+    )
+
+
+@pytest.mark.parametrize("message", [
+    "can you send me their number", "send me the number", "contact number",
+    "Entartica phone number", "sales contact", "email address", "number bhejo",
+    "unka number bhejo", "how can I contact you",
+])
+def test_enabled_graph_contact_requests_use_approved_deterministic_contact(monkeypatch, message):
+    """Production-path regression test for contact routing via LangGraph."""
+    from app.services.raipur.contact_handler import is_contact_information_request
+    knowledge = _Knowledge()
+    result = _process(_orchestrator(monkeypatch, knowledge), message)
+    # Verify contact handler recognizes the request
+    assert is_contact_information_request(message), f"Contact handler did not recognize: {message}"
+    # Verify deterministic routing
+    assert result.detected_intent == "contact_information"
+    assert result.safe_metadata["graph_answer_source"] == "approved_sales_contact"
+    assert result.safe_metadata["response_mode"] == "direct_contact_details"
+    # Verify approved contact details in response
+    assert "+91 9429691418" in result.draft_text
+    assert "sales@entartica.com" in result.draft_text
+    # Verify no generic fallback or external references
+    assert "google" not in result.draft_text.casefold()
+    assert "website" not in result.draft_text.casefold()
+    assert "price" not in result.draft_text.casefold()
+    assert "booking confirm" not in result.draft_text.casefold()
+    # Verify generic planner and fallback were not called
+    assert knowledge.service_calls == [] and knowledge.venue_calls == []
+    assert result.safe_metadata.get("response_basis") in {"deterministic", None}
+
+
+def test_enabled_graph_pronoun_contact_request_overrides_houseboat_context(monkeypatch):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    prior = _process(orchestrator, "Tell me about Houseboat Celebration")
+    result = _process(orchestrator, "Can you send me their number?", context=prior.context)
+    assert result.detected_intent == "contact_information"
+    assert result.safe_metadata["graph_answer_source"] == "approved_sales_contact"
+    assert "+91 9429691418" in result.draft_text
+    assert "sales@entartica.com" in result.draft_text
+    assert "Houseboat" not in result.draft_text
+
+
 def test_enabled_graph_catalogue_uses_multiple_services_and_no_handover(monkeypatch):
     result = _process(_orchestrator(monkeypatch, _Knowledge()), "can you tell me about various rides")
-    assert result.detected_intent == "service_catalogue"
+    assert result.detected_intent == "activity_service_list"
     assert result.safe_metadata["active_engine"] == "langgraph"
     assert "Speed Boat" in result.draft_text and "Kayak" in result.draft_text
     assert not result.human_handover_required
@@ -97,11 +179,136 @@ def test_enabled_graph_catalogue_uses_multiple_services_and_no_handover(monkeypa
     assert result.safe_metadata["response_basis"] == "deterministic"
 
 
+@pytest.mark.parametrize(
+    "message,route,intent,catalogue_type",
+    [
+        ("what are the celebartion are there", "approved_celebration_catalogue", "celebration_service_list", "celebration"),
+        ("can you provide list of all celebrations", "approved_celebration_catalogue", "celebration_service_list", "celebration"),
+        ("what activities do you have", "approved_activity_catalogue", "activity_service_list", "activity"),
+        ("share water activities info", "approved_activity_catalogue", "activity_service_list", "activity"),
+        ("i want combo package", "approved_package_catalogue", "service_catalogue", "package"),
+    ],
+)
+def test_enabled_graph_catalogue_requests_use_shared_approved_rows(monkeypatch, message, route, intent, catalogue_type):
+    result = _process(_orchestrator(monkeypatch, _Knowledge()), message)
+
+    assert result.detected_intent == intent
+    assert result.safe_metadata["graph_answer_source"] == route
+    assert result.safe_metadata["catalogue_route"] == route
+    assert result.safe_metadata["shared_handler_used"] is True
+    assert result.safe_metadata["catalogue_type"] == catalogue_type
+    assert result.safe_metadata["catalogue_source"] == "active_raipur_services"
+    assert result.safe_metadata["catalogue_item_count"] > 0
+    assert not result.human_handover_required
+    assert "price" not in result.draft_text.casefold()
+
+
+@pytest.mark.parametrize("message", [
+    "what are the activities", "activities", "rides", "what rides do you have",
+    "water activities", "adventure experience", "adventure experiences",
+    "kya kya activities hai", "rides batao",
+])
+def test_enabled_graph_activity_category_requests_never_fall_into_clarification(monkeypatch, message):
+    result = _process(_orchestrator(monkeypatch, _Knowledge()), message)
+    text = result.draft_text.casefold()
+    assert result.detected_intent == "activity_service_list"
+    assert result.safe_metadata["graph_answer_source"] == "approved_activity_catalogue"
+    assert result.safe_metadata["shared_handler_used"] is True
+    assert result.safe_metadata["catalogue_item_count"] > 0
+    assert result.context.active_topic == "activity_catalogue"
+    assert "family attractions" not in text and "facilities" not in text
+    assert "price" not in text and "availability" not in text and "booking confirm" not in text
+
+
+@pytest.mark.parametrize("first,followup,catalogue_type,source", [
+    ("adventure experience", "give me list", "activity", "approved_activity_catalogue"),
+    ("activities", "show me all", "activity", "approved_activity_catalogue"),
+    ("celebrations", "send list", "celebration", "approved_celebration_catalogue"),
+])
+def test_enabled_graph_short_list_followup_uses_persisted_catalogue_context(monkeypatch, first, followup, catalogue_type, source):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    initial = _process(orchestrator, first)
+    result = _process(orchestrator, followup)
+    assert initial.context.active_entity_name == catalogue_type
+    assert result.safe_metadata["graph_answer_source"] == source
+    assert result.safe_metadata["catalogue_type"] == catalogue_type
+    assert result.context.active_entity_name == catalogue_type
+    assert result.safe_metadata["catalogue_item_count"] > 0
+
+
+def test_enabled_graph_explicit_facilities_does_not_offer_unsupported_categories(monkeypatch):
+    result = _process(_orchestrator(monkeypatch, _Knowledge()), "facilities")
+    assert result.detected_intent == "venue_facility"
+    assert "not confirmed" in result.draft_text.casefold()
+    assert "family attractions" not in result.draft_text.casefold()
+    assert "adventure experiences" not in result.draft_text.casefold()
+
+
+def test_enabled_graph_birthday_enquiry_lists_only_approved_celebration_options(monkeypatch):
+    result = _process(_orchestrator(monkeypatch, _Knowledge()), "I want to celebrate birthday party there")
+
+    assert result.detected_intent == "celebration_service_list"
+    assert result.safe_metadata["catalogue_type"] == "celebration"
+    for name in ("Floating Gazebo", "Jetty Gazebo", "Pontoon Celebration", "Party Boat Celebration", "Houseboat Celebration"):
+        assert name in result.draft_text
+    assert "Jet Ski" not in result.draft_text
+    assert "confirmed booking" not in result.draft_text.casefold()
+
+
+def test_enabled_graph_houseboat_exact_topics_and_followups_keep_context(monkeypatch):
+    class HouseboatKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            answers = {
+                "overview": ("Houseboat Celebration is a private floating experience.", "Definition"),
+                "suitable_for": ("Couples and intimate groups are suitable for the Houseboat Celebration. Participation is subject to safety requirements and staff assessment.", "Suitable For"),
+                "inclusions": ("Confirmed: Private houseboat use and captain navigation. Optional Add-Ons: Food and decoration require confirmation.", "Celebration Inclusions"),
+            }
+            text, heading = answers[kwargs["detail_mode"]]
+            return KnowledgeDraft(text, "houseboat_celebration.md", .8, False, heading, 1, "houseboat-document", (heading,))
+    knowledge = HouseboatKnowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    _process(orchestrator, "Tell me about Houseboat Celebration")
+    suitable = _process(orchestrator, "Who is it suitable for?")
+    inclusions = _process(orchestrator, "What is included?")
+
+    assert suitable.safe_metadata["service_code"] == "houseboat_celebration"
+    assert suitable.safe_metadata["topic"] == "suitable_for"
+    assert suitable.safe_metadata["selected_section_heading"] == "Suitable For"
+    assert "Couples" in suitable.draft_text and "exact information is not confirmed" not in suitable.draft_text.casefold()
+    assert inclusions.safe_metadata["service_code"] == "houseboat_celebration"
+    assert inclusions.safe_metadata["topic"] == "inclusions"
+    assert inclusions.safe_metadata["selected_section_heading"] == "Celebration Inclusions"
+    assert "Optional Add-Ons" in inclusions.draft_text
+
+
 def test_enabled_graph_location_overrides_stale_service_context(monkeypatch):
     context = ConversationContext(BookingDetails(None, None, None, None, None, None, None), last_service_name="Speed Boat", last_service_code="speed_boat_ride")
     result = _process(_orchestrator(monkeypatch, _Knowledge()), "What is the location of Raipur?", context)
     assert result.detected_intent == "location" and result.context.last_service_code is None
     assert "Sector 24" in result.draft_text and not result.human_handover_required
+
+
+def test_enabled_graph_contextual_hinglish_capacity_uses_active_service(monkeypatch):
+    class BumperKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            return KnowledgeDraft(
+                "Adult Bumper Boats typically offer single-seater and twin-seater options. Kids Bumper Boats typically accommodate one child per boat. Current capacity must be confirmed before booking.",
+                "bumper_boat.md", .8, False, "Capacity", 1, "document-bumper", ("Capacity",),
+            )
+    knowledge = BumperKnowledge()
+    # Production reloads the prior turn through the persisted conversation
+    # record; omit an injected object to exercise that same path.
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    selected = _process(orchestrator, "Tell me about Bumper Boat.")
+    result = _process(orchestrator, "kitna log aa sakte hain isme?")
+    assert result.detected_intent in {"service_topic", "contextual_service_followup"}
+    assert result.safe_metadata["service_code"] == "bumper_boat"
+    assert result.safe_metadata["topic"] == "capacity"
+    assert knowledge.service_calls[-1][1:] == ("Bumper Boat", "bumper_boat", "capacity")
+    assert "single-seater and twin-seater" in result.draft_text
+    assert not result.human_handover_required
 
 
 def test_enabled_graph_exact_service_preserves_grounding_for_automatic_reply(monkeypatch):
@@ -214,10 +421,14 @@ def test_enabled_graph_explicit_topics_keep_only_the_requested_section(monkeypat
     assert duration.safe_metadata["selected_section_heading"] == "Duration"
     assert duration.safe_metadata["retrieved_section_headings"] == ["Duration"]
     assert duration_hinglish.safe_metadata["topic"] == "duration" and "5 to 10 minutes" in duration_hinglish.draft_text
-    assert swimming.draft_text == "No, swimming ability is not required for the Speed Boat Ride. All passengers are provided with mandatory high-buoyancy life jackets before boarding."
+    assert swimming.draft_text.startswith("*Swimming Requirement*")
+    assert "No, swimming ability is not required for the Speed Boat Ride." in swimming.draft_text
+    assert "mandatory high-buoyancy life jackets" in swimming.draft_text
     assert not swimming.draft_text.startswith("Speed Boat swimming:")
     assert swimming_hinglish.safe_metadata["topic"] == "swimming"
-    assert swimming_hinglish.draft_text.startswith("No,") and "high-buoyancy life jackets" in swimming_hinglish.draft_text
+    assert swimming_hinglish.draft_text.startswith("*Swimming Requirement*")
+    assert "No, swimming ability is not required" in swimming_hinglish.draft_text
+    assert "high-buoyancy life jackets" in swimming_hinglish.draft_text
     assert inclusions.draft_text.count("H2O Play Park") == 1
 
 
@@ -332,7 +543,7 @@ def test_enabled_graph_end_to_end_dynamic_pipeline_keeps_routes_and_context_isol
         ("What is the location?", "answer_location", None, None),
         ("What rides are available?", "answer_catalogue", None, None),
         ("What is the price of Jet Ski?", "handover_to_sales", None, None),
-        ("What is kayaking?", "answer_general_openai", None, None),
+        ("What is kayaking?", "answer_service_knowledge", "kayaking", "overview"),
         ("Tell me about Kayaking at Entartica.", "answer_service_knowledge", "kayaking", "overview"),
         ("What exact engine does your Speed Boat use?", "answer_unknown_entartica_fact", "speed_boat_ride", "technical_specification"),
         ("Thank you.", "answer_greeting", None, None),
@@ -343,3 +554,263 @@ def test_enabled_graph_end_to_end_dynamic_pipeline_keeps_routes_and_context_isol
         assert result.safe_metadata.get("service_code") == service
         assert result.safe_metadata.get("topic") == topic
     assert "5 to 10 minutes" in _process(orchestrator, "What is the duration of Jet Ski?").draft_text
+
+
+def test_enabled_graph_acknowledgement_preserves_houseboat_context_for_inclusions(monkeypatch):
+    class HouseboatKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            answers = {
+                "overview": ("Houseboat Celebration is a private floating experience.", "Definition"),
+                "inclusions": ("Confirmed: Private houseboat use and captain navigation. Optional Add-Ons: Food and decoration require confirmation.", "Celebration Inclusions"),
+            }
+            text, heading = answers[kwargs["detail_mode"]]
+            return KnowledgeDraft(text, "houseboat_celebration.md", .8, False, heading, 1, "houseboat-document", (heading,))
+    knowledge = HouseboatKnowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    first = _process(orchestrator, "Tell me about Houseboat Celebration")
+    thanks = _process(orchestrator, "Thank you")
+    third = _process(orchestrator, "What is included?")
+
+    assert first.safe_metadata["service_code"] == "houseboat_celebration"
+    assert first.safe_metadata["topic"] == "overview"
+
+    assert thanks.detected_intent == "greeting"
+    assert thanks.safe_metadata["selected_route"] == "answer_greeting"
+    assert thanks.context.last_service_code == "houseboat_celebration"
+    assert thanks.context.last_service_name == "Houseboat Celebration"
+    assert "welcome" in thanks.draft_text.casefold()
+
+    assert third.safe_metadata["service_code"] == "houseboat_celebration"
+    assert third.safe_metadata["topic"] == "inclusions"
+    assert third.safe_metadata["selected_route"] == "answer_service_knowledge"
+    assert "Confirmed" in third.draft_text and "Optional Add-Ons" in third.draft_text
+    assert "exact information is not confirmed" not in third.draft_text.casefold()
+
+
+def test_enabled_graph_acknowledgement_preserves_jet_ski_duration_followup(monkeypatch):
+    class JetSkiKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            text = ("The Jet Ski Ride generally lasts around 5 to 10 minutes per session." if kwargs["detail_mode"] == "duration" else "The Jet Ski Ride is an approved Raipur water-ride experience.")
+            heading = "Duration" if kwargs["detail_mode"] == "duration" else "Overview"
+            return KnowledgeDraft(text, "jet_ski_ride.md", .8, False, heading, 1, "jet-ski", (heading,))
+    knowledge = JetSkiKnowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    _process(orchestrator, "Tell me about Jet Ski")
+    thanks = _process(orchestrator, "Thanks")
+    followup = _process(orchestrator, "How long is it?")
+
+    assert thanks.context.last_service_code == "jet_ski_ride"
+    assert followup.safe_metadata["service_code"] == "jet_ski_ride"
+    assert followup.safe_metadata["topic"] == "duration"
+    assert followup.safe_metadata["selected_route"] == "answer_service_knowledge"
+    assert "5 to 10 minutes" in followup.draft_text
+    assert "exact information is not confirmed" not in followup.draft_text.casefold()
+
+
+def test_enabled_graph_acknowledgement_then_explicit_switch_replaces_service(monkeypatch):
+    class SwitchKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            facts = {
+                ("jet_ski_ride", "overview"): ("The Jet Ski Ride is an approved Raipur water-ride experience.", "Overview"),
+                ("water_bike", "overview"): ("The Water Bike is an approved Raipur water-ride experience.", "Overview"),
+                ("water_bike", "duration"): ("This activity is included in H2O Playpark full-day access from 10:00 AM to 6:30 PM. The access window does not mean one continuous activity session. Individual turn or session duration is not separately confirmed.", "Duration"),
+            }
+            text, heading = facts[(service_code, kwargs["detail_mode"])]
+            return KnowledgeDraft(text, f"{service_code}.md", .8, False, heading, 1, service_code, (heading,))
+    orchestrator = _orchestrator(monkeypatch, SwitchKnowledge())
+    _process(orchestrator, "Tell me about Jet Ski")
+    _process(orchestrator, "Thanks")
+    switched = _process(orchestrator, "Tell me about Water Bike")
+    followup = _process(orchestrator, "How long is it?")
+
+    assert switched.safe_metadata["service_code"] == "water_bike"
+    assert switched.safe_metadata["topic"] == "overview"
+    assert followup.safe_metadata["service_code"] == "water_bike"
+    assert followup.safe_metadata["topic"] == "duration"
+    assert "full-day access" in followup.draft_text
+    assert "5 to 10 minutes" not in followup.draft_text
+    assert "Jet Ski" not in followup.draft_text
+
+
+def test_enabled_graph_acknowledgement_without_prior_service_is_safe(monkeypatch):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    thanks = _process(orchestrator, "Thank you")
+    followup = _process(orchestrator, "What is included?")
+
+    assert thanks.detected_intent == "greeting"
+    assert thanks.context.last_service_code is None
+    assert followup.context.last_service_code is None
+    assert followup.draft_text.strip()
+
+
+def test_enabled_graph_h2o_duration_answer_uses_duration_knowledge(monkeypatch):
+    class H2OKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            if kwargs["detail_mode"] == "duration":
+                text = ("This activity is included in H2O Playpark full-day access from 10:00 AM to 6:30 PM. "
+                        "The access window does not mean one continuous activity session. "
+                        "Individual turn or session duration is not separately confirmed.")
+                heading = "Duration"
+            else:
+                text = "H2O Playpark access is available from 10:00 AM to 6:30 PM, subject to weather and operational conditions."
+                heading = "Operating Hours"
+            return KnowledgeDraft(text, f"{service_code}.md", .8, False, heading, 1, f"document-{service_code}", (heading,))
+    knowledge = H2OKnowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    en = _process(orchestrator, "What is the duration of Water Bike?")
+    hinglish = _process(orchestrator, "Water Bike kitni der ki hai?")
+    timing = _process(orchestrator, "What are the Water Bike timings?")
+
+    assert en.safe_metadata["service_code"] == "water_bike"
+    assert en.safe_metadata["topic"] == "duration"
+    assert en.safe_metadata["selected_section_heading"] == "Duration"
+    assert "full-day access" in en.draft_text and "does not mean" not in en.draft_text
+    assert "not separately confirmed" not in en.draft_text
+    assert "5 to 10 minutes" not in en.draft_text
+    assert hinglish.safe_metadata["topic"] == "duration" and "full-day access" in hinglish.draft_text
+    assert timing.safe_metadata["topic"] == "operating_hours"
+    assert timing.safe_metadata["selected_section_heading"] == "Operating Hours"
+    assert "10:00 AM to 6:30 PM" in timing.draft_text
+    assert "full-day access" not in timing.draft_text
+
+
+def test_enabled_graph_celebration_timing_uses_operating_hours_knowledge(monkeypatch):
+    class PartyBoatKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            return KnowledgeDraft(
+                "Celebration services operate from 10:00 AM to 9:00 PM, subject to weather and operational conditions.",
+                "party_boat_celebration.md", .8, False, "Operating Hours", 1, "document-party-boat", ("Operating Hours",),
+            )
+    knowledge = PartyBoatKnowledge()
+    result = _process(_orchestrator(monkeypatch, knowledge), "What are the Party Boat Celebration timings?")
+    assert result.safe_metadata["service_code"] == "party_boat_celebration"
+    assert result.safe_metadata["topic"] == "operating_hours"
+    assert result.safe_metadata["selected_section_heading"] == "Operating Hours"
+    assert "10:00 AM to 9:00 PM" in result.draft_text
+
+
+def test_enabled_graph_venue_level_duration_and_timing_are_deterministic(monkeypatch):
+    knowledge = _Knowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    duration = _process(orchestrator, "How long do the water rides last?")
+    timing = _process(orchestrator, "What are the ride timings?")
+
+    assert duration.detected_intent == "venue_duration_timing"
+    assert duration.safe_metadata.get("service_code") is None
+    assert duration.safe_metadata["topic"] == "duration"
+    assert duration.safe_metadata["selected_route"] == "answer_venue_knowledge"
+    assert "One-Time" in duration.draft_text and "H2O Playpark" in duration.draft_text
+    assert "5 to 10 minutes" in duration.draft_text
+
+    assert timing.detected_intent == "venue_duration_timing"
+    assert timing.safe_metadata.get("service_code") is None
+    assert timing.safe_metadata["topic"] == "operating_hours"
+    assert "10:00 AM" in timing.draft_text and "9:00 PM" in timing.draft_text
+
+    assert not knowledge.service_calls and not knowledge.venue_calls
+    assert not duration.human_handover_required and not timing.human_handover_required
+
+
+def test_enabled_graph_venue_level_duration_overrides_stale_service_context(monkeypatch):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    prior = _process(orchestrator, "Tell me about Jet Ski")
+    result = _process(orchestrator, "How long do the water rides last?", context=prior.context)
+    assert result.detected_intent == "venue_duration_timing"
+    assert result.safe_metadata.get("service_code") is None
+    assert result.safe_metadata["topic"] == "duration"
+    assert result.safe_metadata.get("use_previous_service", False) is False
+    assert "One-Time" in result.draft_text
+
+
+@pytest.mark.parametrize("message", [
+    "what is the opening hours of raipur?",
+    "what is the timing of raipur?",
+])
+def test_enabled_graph_general_operating_hours_questions_use_deterministic_venue_answer(monkeypatch, message):
+    knowledge = _Knowledge()
+    result = _process(_orchestrator(monkeypatch, knowledge), message)
+
+    assert result.detected_intent == "venue_duration_timing"
+    assert result.safe_metadata.get("service_code") is None
+    assert result.safe_metadata["topic"] == "operating_hours"
+    assert result.safe_metadata["selected_route"] == "answer_venue_knowledge"
+    assert result.safe_metadata["response_basis"] == "deterministic"
+    assert result.safe_metadata["answer_source"] == "venue_duration_timing"
+    assert "10:00 AM to 6:30 PM" in result.draft_text
+    assert "10:00 AM to 9:00 PM" in result.draft_text
+    assert "2:00 PM to 6:00 PM" in result.draft_text
+    assert "2:00 PM to 12:00 PM the next day" in result.draft_text
+    assert "weather and operational conditions" in result.draft_text
+    assert not knowledge.service_calls and not knowledge.venue_calls
+    assert not result.human_handover_required
+
+
+def test_enabled_graph_venue_timing_confirmation_followup_uses_deterministic_answer(monkeypatch):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    first = _process(orchestrator, "what is the timing of raipur?")
+    result = _process(orchestrator, "isnt it 10 AM to 6:30 PM")
+
+    assert first.detected_intent == "venue_duration_timing"
+    assert result.detected_intent == "venue_timing_confirmation"
+    assert result.safe_metadata.get("service_code") is None
+    assert result.safe_metadata["topic"] == "operating_hours"
+    assert result.safe_metadata["selected_route"] == "answer_venue_knowledge"
+    assert result.safe_metadata["answer_source"] == "venue_timing_confirmation"
+    assert "Yes" in result.draft_text
+    assert "10:00 AM to 6:30 PM" in result.draft_text
+    assert "2:00 PM to 6:00 PM" in result.draft_text
+    assert "2:00 PM to 12:00 PM the next day" in result.draft_text
+    assert not result.human_handover_required
+
+
+def test_enabled_graph_general_timing_question_overrides_stale_service_context(monkeypatch):
+    orchestrator = _orchestrator(monkeypatch, _Knowledge())
+    prior = _process(orchestrator, "Tell me about Jet Ski")
+    result = _process(orchestrator, "what is the opening hours of raipur?", context=prior.context)
+    assert result.detected_intent == "venue_duration_timing"
+    assert result.safe_metadata.get("service_code") is None
+    assert result.safe_metadata["topic"] == "operating_hours"
+    assert result.safe_metadata.get("use_previous_service", False) is False
+    assert "2:00 PM to 6:00 PM" in result.draft_text
+
+
+def test_enabled_graph_service_timing_and_duration_questions_stay_service_specific(monkeypatch):
+    class TimingKnowledge(_Knowledge):
+        def answer_service_details(self, question, service_name, service_code, **kwargs):
+            self.service_calls.append((question, service_name, service_code, kwargs.get("detail_mode")))
+            facts = {
+                ("party_boat_celebration", "operating_hours"): "Celebration services operate from 10:00 AM to 9:00 PM, subject to weather and operational conditions.",
+                ("jet_ski_ride", "operating_hours"): "Water sports and ride activities generally operate between 10:00 AM and 6:30 PM, subject to weather and operational conditions.",
+                ("kayaking", "operating_hours"): "H2O Playpark access is available from 10:00 AM to 6:30 PM, subject to weather and operational conditions.",
+                ("daycation_package", "operating_hours"): "The Daycation Package is available from 2:00 PM to 6:00 PM.",
+                ("staycation_combo", "operating_hours"): "The Staycation Package is available from 2:00 PM to 12:00 PM the next day.",
+                ("party_boat_celebration", "duration"): "The Party Boat Celebration has a starting duration of 2 hours, subject to confirmation.",
+                ("houseboat_celebration", "duration"): "The Houseboat Celebration has a starting duration of 30 minutes, subject to confirmation.",
+            }
+            text = facts[(service_code, kwargs["detail_mode"])]
+            heading = "Operating Hours" if kwargs["detail_mode"] == "operating_hours" else "Duration"
+            return KnowledgeDraft(text, f"{service_code}.md", .8, False, heading, 1, service_code, (heading,))
+
+    knowledge = TimingKnowledge()
+    orchestrator = _orchestrator(monkeypatch, knowledge)
+    cases = [
+        ("What are the Party Boat timings?", "party_boat_celebration", "operating_hours", "10:00 AM to 9:00 PM"),
+        ("What are the Jet Ski timings?", "jet_ski_ride", "operating_hours", "10:00 AM and 6:30 PM"),
+        ("What are the Kayak timings?", "kayaking", "operating_hours", "10:00 AM to 6:30 PM"),
+        ("What is the Daycation timing?", "daycation_package", "operating_hours", "2:00 PM to 6:00 PM"),
+        ("What is the Staycation timing?", "staycation_combo", "operating_hours", "2:00 PM to 12:00 PM the next day"),
+        ("What is the duration of Party Boat?", "party_boat_celebration", "duration", "2 hours"),
+        ("What is the duration of Houseboat?", "houseboat_celebration", "duration", "30 minutes"),
+    ]
+    for message, service_code, topic, expected in cases:
+        result = _process(orchestrator, message)
+        assert result.safe_metadata["service_code"] == service_code
+        assert result.safe_metadata["topic"] == topic
+        assert result.safe_metadata["selected_route"] == "answer_service_knowledge"
+        assert expected in result.draft_text
+    assert not knowledge.venue_calls

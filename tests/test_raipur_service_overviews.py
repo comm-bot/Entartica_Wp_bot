@@ -281,8 +281,9 @@ def test_full_overview_uses_multiple_exact_service_sections():
     result = provider.answer_service_details("Everything", "Jet Ski", "jet_ski_ride", full_overview=True)
 
     assert result.text is not None
-    assert seen and seen[0].count("Approved section") == 6
-    assert "Approved section 7" not in seen[0]
+    assert not seen  # raw section prose is no longer sent to the old answer generator
+    assert "Approved section" in result.text
+    assert "Approved section 7" not in result.text
 
 
 def test_more_details_prefers_additional_operational_section_over_definition_or_booking():
@@ -302,5 +303,6 @@ def test_more_details_prefers_additional_operational_section_over_definition_or_
     result = provider.answer_service_details("Provide more details about it", "Jet Ski", "jet_ski_ride", detail_mode="more_details")
 
     assert result.section_heading == "How It Generally Works"
-    assert result.text and result.text.startswith("Operation evidence.")
+    assert result.text and "Operation evidence." in result.text
+    assert "Booking FAQ" not in result.text
     assert "Booking FAQ" not in result.text

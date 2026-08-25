@@ -3,8 +3,9 @@ import importlib.util
 from pathlib import Path
 
 from app.services.raipur_langgraph import ApprovedFacts, MessagePlan, RaipurLangGraphWorkflow, deterministic_fact_fallback, normalize_section_heading, rank_sections_for_followup, validate_response_against_facts
-from app.services.raipur_conversation import KnowledgeDraft
+from app.services.raipur.response_models import ConversationContext, KnowledgeDraft
 from app.services.raipur_automatic_replies import eligible_for_automatic_reply
+from app.services.booking_enquiries import BookingDetails
 
 
 class FakeConversation:
@@ -69,13 +70,34 @@ def test_known_service_topics_use_canonical_codes_and_priority():
         assert (update["intent"], update["service_code"], update["topic"]) == ("service_topic", service_code, topic)
 
 
-def test_generic_service_definitions_do_not_use_entartica_service_context():
+def test_resolver_only_topics_map_to_supported_graph_topics_without_crashing():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    cases = (
+        ("Can pregnant women ride Jet Ski?", "service_topic", "jet_ski_ride", "eligibility"),
+        ("Can I drive Jet Ski myself?", "service_topic", "jet_ski_ride", "how_it_works"),
+        ("What happens if I fall from Jet Ski?", "service_topic", "jet_ski_ride", "safety"),
+    )
+    for message, intent, service_code, topic in cases:
+        update = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
+        assert (update["intent"], update["service_code"], update["topic"]) == (intent, service_code, topic)
+        assert workflow.route({**state(message), **update}) == "answer_service_knowledge"
+
+
+def test_service_comparison_question_maps_to_overview_without_crashing():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    update = workflow.plan_message({**state("Compare Jet Ski and Speed Boat."), "_runtime": {"current_state": None}})
+    assert update["topic"] == "overview"
+    assert update["selected_route"] == "answer_service_knowledge"
+    assert update["requires_handover"] is False
+
+
+def test_explicit_service_alias_definitions_use_canonical_service_context():
     workflow = RaipurLangGraphWorkflow(FakeConversation())
     for message in ("What is kayaking?", "What is a pontoon boat?", "What is a jet ski?", "How does kayaking generally work?"):
         plan = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
-        assert plan["intent"] == "general_question"
-        assert plan["selected_route"] == "answer_general_openai"
-        assert plan["service_code"] is None and plan["use_previous_service"] is False
+        assert plan["intent"] in {"service_overview", "service_topic"}
+        assert plan["selected_route"] == "answer_service_knowledge"
+        assert plan["service_code"] is not None and plan["use_previous_service"] is False
     specific = workflow.plan_message({**state("Tell me about Kayaking at Entartica."), "_runtime": {"current_state": None}})
     assert (specific["intent"], specific["service_code"], specific["selected_route"]) == ("service_overview", "kayaking", "answer_service_knowledge")
 
@@ -301,3 +323,563 @@ def test_promptfoo_provider_is_offline_and_reports_route():
     spec.loader.exec_module(module)
     output = module.call_api("What is the price of Jet Ski?", {}, {})
     assert output["output"] == "route=handover_to_sales; intent=pricing; service_code=none"
+
+
+def _service_context(code, name):
+    return ConversationContext(
+        BookingDetails(None, None, None, None, None, None, None),
+        last_service_name=name, last_service_code=code, active_topic="overview",
+    )
+
+
+def _greeting_answer_state(message, context):
+    base = state(message)
+    base.update({
+        "selected_route": "answer_greeting",
+        "intent": "greeting",
+        "_runtime": {"current_state": context, "customer": {"id": "customer"}, "conversation": {"id": "conversation"}},
+    })
+    return base
+
+
+def test_acknowledgement_preserves_active_service_context():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    context = _service_context("houseboat_celebration", "Houseboat Celebration")
+    result = workflow.answer_existing(_greeting_answer_state("Thank you", context))["result"]
+    assert result.context.last_service_code == "houseboat_celebration"
+    assert result.context.last_service_name == "Houseboat Celebration"
+    assert result.context.active_topic == "overview"
+    assert "welcome" in result.draft_text.casefold() or "swagat" in result.draft_text.casefold()
+
+
+def test_fresh_greeting_still_clears_active_service_context():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    context = _service_context("houseboat_celebration", "Houseboat Celebration")
+    result = workflow.answer_existing(_greeting_answer_state("Hello", context))["result"]
+    assert result.context.last_service_code is None
+    assert result.context.last_service_name is None
+    assert result.context.active_topic is None
+
+
+def test_acknowledgement_without_active_service_keeps_context_unchanged():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    context = ConversationContext(BookingDetails(None, None, None, None, None, None, None))
+    result = workflow.answer_existing(_greeting_answer_state("theek hai", context))["result"]
+    assert result.context.last_service_code is None
+    assert result.draft_text.strip()
+
+
+def test_family_fun_questions_route_to_family_discovery_intent():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    for message in (
+        "i am coming with my family, which fun activities we can do?",
+        "family ke saath kya activities kar sakte hain?",
+        "परिवार के साथ क्या कर सकते हैं?",
+        "We are coming with children. What rides can we do?",
+        "family ke saath kya kar sakte hain?",
+    ):
+        update = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
+        assert update["intent"] == "family_activity_discovery", message
+        assert update["requires_handover"] is False, message
+        assert workflow.route({**state(message), **update}) == "answer_venue_knowledge", message
+
+
+def test_family_discovery_does_not_hijack_service_restricted_or_catalogue_routes():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    cases = (
+        ("Tell me about Jet Ski", "service_overview", "answer_service_knowledge", False),
+        ("What activities do you have?", "service_catalogue", "answer_catalogue", False),
+        ("What is the price for family activities?", "pricing", "handover_to_sales", True),
+        ("Book family activities for tomorrow.", "booking", "handover_to_sales", True),
+        ("Which family rides are available today?", "service_catalogue", "answer_catalogue", False),
+        ("What is the location of Raipur?", "location", "answer_location", False),
+    )
+    for message, intent, route, handover in cases:
+        update = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
+        assert update["intent"] == intent, message
+        assert workflow.route({**state(message), **update}) == route, message
+        assert update["requires_handover"] is handover, message
+
+
+def test_family_discovery_context_followup_uses_catalogue_context():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    update = workflow.plan_message({**state("kids options batao"), "previous_topic": "activity_catalogue", "_runtime": {"current_state": None}})
+    assert update["intent"] == "service_catalogue"
+    assert update["selected_route"] == "answer_catalogue"
+    assert update["requires_handover"] is False
+
+
+class FakeServices:
+    def __init__(self, rows):
+        self.rows = rows
+    def list_active_for_location(self, location_id):
+        return self.rows
+
+
+def test_general_celebration_intent_routes_directly_to_catalogue():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    for message in (
+        "I want to celebrate",
+        "mujhe celebration karvana hain",
+        "मुझे सेलिब्रेशन करना है",
+    ):
+        update = workflow.plan_message({**state(message), "_runtime": {"current_state": None}})
+        assert update["intent"] == "celebration_service_list", message
+        assert update["requires_handover"] is False, message
+        assert workflow.route({**state(message), **update}) == "answer_catalogue", message
+
+
+def test_general_celebration_requests_show_approved_options_immediately():
+    from app.services.raipur_services import APPROVED_RAIPUR_SERVICES
+
+    class ForbiddenPlanner:
+        def plan(self, *_args, **_kwargs):
+            raise AssertionError("general celebration request reached planner")
+
+    rows = [
+        {"id": item.slug, "name": item.name, "active": True}
+        for item in APPROVED_RAIPUR_SERVICES
+        if item.category == "floating_celebration"
+    ]
+    workflow = RaipurLangGraphWorkflow(
+        FakeConversation(), planner=ForbiddenPlanner(), services=FakeServices(rows)
+    )
+    forbidden = (
+        "what occasion", "birthday or anniversary", "what kind of event",
+        "corporate or client event", "couple or family",
+        "relaxed or adventurous", "what kind of adventure",
+    )
+
+    for message in (
+        "mujhe celebration karvana hain",
+        "I want to celebrate something",
+        "anniversary celebration karni hai",
+        "corporate event karna hai",
+        "one special event",
+    ):
+        plan = workflow.plan_message({
+            **state(message), "previous_service_code": None,
+            "previous_topic": None, "_runtime": {"current_state": None},
+        })
+        answer_state = {
+            **state(message), **plan,
+            "_runtime": {"current_state": None, "customer": {"id": "customer"}, "conversation": {"id": "conversation", "location_id": "raipur"}},
+        }
+        result = workflow.answer_existing(answer_state)["result"]
+        assert result.detected_intent == "celebration_service_list", message
+        for option in (
+            "Floating Gazebo", "Houseboat Celebration", "Jetty Gazebo",
+            "Party Boat Celebration", "Pontoon Celebration",
+        ):
+            assert option in result.draft_text, (message, option)
+        response = result.draft_text.casefold()
+        assert not any(question in response for question in forbidden), message
+        assert result.context.pending_clarification_type is None
+
+
+def test_occasion_reply_after_pending_celebration_uses_celebration_catalogue():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    for message in (
+        "anniversary",
+        "birthday",
+        "सालगिरह",
+        "birthday karna hai",
+        "corporate event",
+        "corporate outing",
+        "client event",
+        "team celebration",
+        "birthday celebration",
+        "anniversary celebration",
+        "corporate function",
+        "office event",
+    ):
+        update = workflow.plan_message({**state(message), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+        assert update["intent"] == "celebration_service_list", message
+        assert update["requires_handover"] is False, message
+        assert workflow.route({**state(message), **update}) == "answer_catalogue", message
+
+
+def test_occasion_reply_after_pending_celebration_shows_approved_options():
+    from app.services.raipur_services import APPROVED_RAIPUR_SERVICES
+    rows = [{"id": item.slug, "name": item.name, "active": True} for item in APPROVED_RAIPUR_SERVICES if item.category == "floating_celebration"]
+    workflow = RaipurLangGraphWorkflow(FakeConversation(), services=FakeServices(rows))
+    context = ConversationContext(
+        BookingDetails(None, None, None, None, None, None, None),
+        active_topic="celebration_catalogue", active_entity_type="catalogue", active_entity_name="celebration",
+    )
+    base = state("anniversary")
+    base.update({
+        "selected_route": "answer_catalogue",
+        "intent": "celebration_service_list",
+        "_runtime": {"current_state": context, "customer": {"id": "customer"}, "conversation": {"id": "conversation", "location_id": "raipur"}},
+    })
+    result = workflow.answer_existing(base)["result"]
+    assert "Floating Gazebo" in result.draft_text
+    assert "Houseboat Celebration" in result.draft_text
+    assert "Pontoon Celebration" in result.draft_text
+    assert result.context.active_topic == "celebration_catalogue"
+    assert result.context.pending_clarification is False
+
+
+def test_followup_after_immediate_celebration_catalogue_does_not_requalify():
+    from app.services.raipur_services import APPROVED_RAIPUR_SERVICES
+
+    class ForbiddenPlanner:
+        def plan(self, *_args, **_kwargs):
+            raise AssertionError("generic planner must not receive a pending occasion answer")
+
+    rows = [
+        {"id": item.slug, "name": item.name, "active": True}
+        for item in APPROVED_RAIPUR_SERVICES
+        if item.category == "floating_celebration"
+    ]
+    workflow = RaipurLangGraphWorkflow(
+        FakeConversation(), planner=ForbiddenPlanner(), services=FakeServices(rows)
+    )
+    forbidden_questions = (
+        "corporate outing or client event",
+        "what type of event",
+        "corporate gathering or celebration",
+        "what occasion",
+        "share your occasion",
+    )
+
+    for opening, occasion in (
+        ("muje celebration karvana he", "one special event"),
+        ("mujhe celebration karvana hain", "something special"),
+        ("I want to celebrate", "family function"),
+        ("I want to celebrate", "anniversary"),
+    ):
+        first_plan = workflow.plan_message(
+            {**state(opening), "previous_service_code": None, "previous_topic": None, "_runtime": {"current_state": None}}
+        )
+        first_state = {
+            **state(opening), **first_plan,
+            "_runtime": {"current_state": None, "customer": {"id": "customer"}, "conversation": {"id": "conversation", "location_id": "raipur"}},
+        }
+        first_result = workflow.answer_existing(first_state)["result"]
+        assert first_result.detected_intent == "celebration_service_list"
+        assert first_result.context.pending_clarification is False
+        assert first_result.context.pending_clarification_type is None
+
+        second_plan = workflow.plan_message({
+            **state(occasion),
+            "previous_service_code": first_result.context.last_service_code,
+            "previous_topic": first_result.context.active_topic,
+            "_runtime": {"current_state": first_result.context},
+        })
+        second_state = {
+            **state(occasion), **second_plan,
+            "_runtime": {"current_state": first_result.context, "customer": {"id": "customer"}, "conversation": {"id": "conversation", "location_id": "raipur"}},
+        }
+        second_result = workflow.answer_existing(second_state)["result"]
+
+        assert second_result.detected_intent == "celebration_service_list", occasion
+        for option in (
+            "Floating Gazebo", "Houseboat Celebration", "Jetty Gazebo",
+            "Party Boat Celebration", "Pontoon Celebration",
+        ):
+            assert option in second_result.draft_text, (occasion, option)
+        response = second_result.draft_text.casefold()
+        assert not any(question in response for question in forbidden_questions), occasion
+        assert second_result.context.pending_clarification is False
+        assert second_result.context.pending_clarification_type is None
+
+
+def test_pending_celebration_does_not_hijack_clear_intents():
+    from app.services.raipur.context_state import set_celebration_occasion_pending
+
+    class ForbiddenPlanner:
+        def plan(self, *_args, **_kwargs):
+            raise AssertionError("clear intent or pending occasion reached planner")
+
+    context = set_celebration_occasion_pending(
+        ConversationContext(BookingDetails(None, None, None, None, None, None, None))
+    ).updated_context
+    workflow = RaipurLangGraphWorkflow(FakeConversation(), planner=ForbiddenPlanner())
+    cases = {
+        "where is Entartica Raipur?": "location",
+        "what are your timings?": "venue_duration_timing",
+        "contact number?": "contact_information",
+        "Tell me about Jet Ski": "service_overview",
+        "hi": "greeting",
+        "thank you": "greeting",
+        "one special event": "celebration_service_list",
+        "something special": "celebration_service_list",
+    }
+
+    for message, expected_intent in cases.items():
+        update = workflow.plan_message({
+            **state(message),
+            "previous_service_code": context.last_service_code,
+            "previous_topic": context.active_topic,
+            "_runtime": {"current_state": context},
+        })
+        assert update["intent"] == expected_intent, message
+
+
+def test_explicit_service_still_wins_with_pending_celebration():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    update = workflow.plan_message({**state("Houseboat Celebration"), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+    assert update["intent"] == "service_overview"
+    assert update["service_code"] == "houseboat_celebration"
+    assert update["requires_handover"] is False
+    assert workflow.route({**state(""), **update}) == "answer_service_knowledge"
+
+
+def test_pricing_still_wins_with_pending_celebration():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    update = workflow.plan_message({**state("corporate event price"), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+    assert update["intent"] == "pricing"
+    assert update["requires_handover"] is True
+    assert workflow.route({**state(""), **update}) == "handover_to_sales"
+
+
+def test_booking_still_wins_with_pending_celebration():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    update = workflow.plan_message({**state("book corporate event"), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+    assert update["intent"] == "booking"
+    assert update["requires_handover"] is True
+    assert workflow.route({**state(""), **update}) == "handover_to_sales"
+
+
+def test_cancel_clears_pending_celebration_flow():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    for message in ("cancel", "cancel karo", "stop"):
+        update = workflow.plan_message({**state(message), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+        assert update["intent"] == "celebration_cancel", message
+        assert update["requires_handover"] is False, message
+        assert workflow.route({**state(message), **update}) == "answer_venue_knowledge", message
+
+
+def test_cancel_answer_clears_pending_celebration_context():
+    from app.services.raipur.context_state import set_celebration_occasion_pending
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    context = set_celebration_occasion_pending(_service_context("houseboat_celebration", "Houseboat Celebration")).updated_context
+    base = state("cancel")
+    base.update({
+        "selected_route": "answer_venue_knowledge",
+        "intent": "celebration_cancel",
+        "_runtime": {"current_state": context, "customer": {"id": "customer"}, "conversation": {"id": "conversation"}},
+    })
+    result = workflow.answer_existing(base)["result"]
+    assert result.context.pending_clarification is False
+    assert result.context.pending_clarification_type is None
+    assert result.context.pending_clarification_options == ()
+    assert result.context.active_topic is None
+    assert result.context.active_entity_name is None
+    assert result.context.last_service_code is None
+
+
+def test_celebration_cancel_never_hijacks_restricted_handover_routes():
+    workflow = RaipurLangGraphWorkflow(FakeConversation())
+    abandon = workflow.plan_message({**state("cancel"), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+    assert abandon["intent"] == "celebration_cancel"
+    assert abandon["requires_handover"] is False
+    for message in (
+        "cancel my booking",
+        "I want a refund for my anniversary booking",
+    ):
+        update = workflow.plan_message({**state(message), "previous_topic": "celebration_catalogue", "_runtime": {"current_state": None}})
+        assert update["intent"] in {"booking", "cancellation_refund"}, message
+        assert update["intent"] != "celebration_cancel", message
+        assert update["requires_handover"] is True, message
+        assert workflow.route({**state(message), **update}) == "handover_to_sales", message
+
+
+def _celebration_workflow():
+    from app.services.raipur_services import APPROVED_RAIPUR_SERVICES
+    from app.rag.raipur_ingestion import build_plan
+    from app.services.raipur.pontoon_package import render_pontoon_package
+
+    rows = [
+        {"id": item.slug, "name": item.name, "is_active": True}
+        for item in APPROVED_RAIPUR_SERVICES
+        if item.category == "floating_celebration"
+    ]
+
+    plan, errors = build_plan(Path(__file__).resolve().parents[1])
+    assert not errors
+    pontoon_document = next(
+        row.document for row in plan
+        if row.document and row.document.source_file == "active/services/pontoon_celebration.md"
+    )
+    pontoon_package = render_pontoon_package(
+        {section.heading: section.text for section in pontoon_document.sections},
+        source_file=pontoon_document.source_file,
+    )
+    assert pontoon_package is not None
+
+    class CelebrationKnowledge:
+        def approved_pontoon_package(self):
+            return pontoon_package
+
+        def answer_service_details(self, _question, service_name, service_code, **kwargs):
+            topic = kwargs["detail_mode"]
+            text = "Party Boat Celebration lasts 2 hours." if topic == "duration" else f"{service_name} is an approved celebration service."
+            heading = "Duration" if topic == "duration" else "Experience Overview"
+            return KnowledgeDraft(text, f"{service_code}.md", .9, False, heading, 1, service_code, (heading,))
+
+    return RaipurLangGraphWorkflow(FakeConversation(), knowledge=CelebrationKnowledge(), services=FakeServices(rows))
+
+
+def _sales_turn(workflow, message, context=None, language="en"):
+    turn_state = {**state(message), "language": language, "previous_service_code": getattr(context, "last_service_code", None), "previous_topic": getattr(context, "active_topic", None)}
+    return workflow.invoke(
+        turn_state,
+        message=SimpleNamespace(content=message),
+        customer={"id": "customer"},
+        conversation={"id": "conversation", "location_id": "raipur"},
+        source_message_id="message",
+        current_state=context,
+    )
+
+
+def test_celebration_sales_journey_collects_guests_then_date_without_duplicates():
+    workflow = _celebration_workflow()
+    first = _sales_turn(workflow, "I want to celebrate my birthday")
+    assert "Floating Gazebo" in first.draft_text and "guests" in first.draft_text.casefold()
+    assert first.context.pending_field == "total_guests"
+
+    second = _sales_turn(workflow, "12", first.context)
+    assert second.context.details.total_guests == 12
+    assert second.context.pending_field == "preferred_date"
+    assert "date" in second.draft_text.casefold() and "guest" not in second.draft_text.casefold().split("what date")[1]
+
+    third = _sales_turn(workflow, "13/08/2026", second.context)
+    assert third.context.details.total_guests == 12
+    assert third.context.details.preferred_date.isoformat() == "2026-08-13"
+    assert third.context.pending_field == "celebration_preference"
+    assert "13 August 2026" in third.draft_text and "12" in third.draft_text
+    assert "what date" not in third.draft_text.casefold()
+    assert "how many guests" not in third.draft_text.casefold()
+
+
+def test_hinglish_celebration_sales_journey_keeps_context():
+    workflow = _celebration_workflow()
+    first = _sales_turn(workflow, "mujhe birthday celebrate karna hai", language="hinglish")
+    second = _sales_turn(workflow, "10", first.context, "hinglish")
+    third = _sales_turn(workflow, "15 August", second.context, "hinglish")
+    assert third.context.details.total_guests == 10
+    assert third.context.details.preferred_date is not None
+    assert third.context.pending_field == "celebration_preference"
+
+
+def test_celebration_sales_interruptions_preserve_collected_guests():
+    workflow = _celebration_workflow()
+    first = _sales_turn(workflow, "birthday celebration")
+    second = _sales_turn(workflow, "12", first.context)
+
+    duration = _sales_turn(workflow, "How long is Party Boat Celebration?", second.context)
+    assert "2 hours" in duration.draft_text
+    assert duration.context.details.total_guests == 12
+    assert duration.context.pending_field == "preferred_date"
+
+    pricing = _sales_turn(workflow, "what is the price?", second.context)
+    assert pricing.human_handover_required is True
+    assert pricing.detected_intent == "pricing"
+
+    selected = _sales_turn(workflow, "Party Boat Celebration", second.context)
+    assert selected.context.last_service_code == "party_boat_celebration"
+    assert selected.context.details.total_guests == 12
+    assert selected.context.pending_field == "preferred_date"
+
+
+def test_pontoon_selection_attaches_approved_media_once_and_enters_durable_qualification():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Boat Celebration")
+    assert selected.context.last_service_code == "pontoon_celebration"
+    assert selected.context.active_journey == "celebration"
+    assert selected.context.pending_action == "celebration_sales"
+    assert "what date" in selected.draft_text.casefold() and "how many persons" in selected.draft_text.casefold()
+    assert selected.safe_metadata["pontoon_package_content_configured"] is True
+    assert selected.safe_metadata["pontoon_media_attached"] is True
+    media = selected.safe_metadata["media_message"]
+    assert media["type"] == "image"
+    assert media["url"].startswith("https://apsjacfeiaiwcklnjmaj.supabase.co/storage/v1/object/sign/")
+    assert media["caption"].startswith("Pontoon Boat Celebration Package\n\nInclusions:")
+    assert "Rack Rate: ₹9,500" in media["caption"]
+    assert "Offer/Discounted Rate: ₹7,499" in media["caption"]
+    assert "₹1,000 token payment" in media["caption"]
+    assert "Full refund if cancelled before 24 hours" in media["caption"]
+    assert media["caption"].endswith("Rates are valid for today.")
+    assert selected.context.pending_slots["pontoon_media_sent"] == "true"
+
+    repeated = _sales_turn(workflow, "Pontoon Boat Celebration", selected.context)
+    assert repeated.safe_metadata["pontoon_media_attached"] is False
+    assert "media_message" not in repeated.safe_metadata
+
+    dated = _sales_turn(workflow, "25 August", selected.context)
+    assert dated.context.details.preferred_date is not None
+    assert dated.context.details.total_guests is None
+    assert dated.context.pending_field == "total_guests"
+    assert "how many" in dated.draft_text.casefold() and "what date" not in dated.draft_text.casefold()
+
+
+def test_pontoon_combined_hinglish_qualification_and_corrections_replace_old_values():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Boat Celebration")
+    combined = _sales_turn(workflow, "25 August ko 6 log", selected.context, "hinglish")
+    assert combined.context.details.preferred_date is not None
+    assert combined.context.details.total_guests == 6
+
+    guests = _sales_turn(workflow, "actually 8 people", combined.context)
+    assert guests.context.details.total_guests == 8
+    changed = _sales_turn(workflow, "change date to 27 August", guests.context)
+    assert changed.context.details.preferred_date.day == 27
+
+    slash = _sales_turn(workflow, "25/08, total 6", selected.context)
+    assert slash.context.details.preferred_date is not None
+    assert slash.context.details.total_guests == 6
+
+
+def test_pontoon_future_combined_input_bypasses_generic_completion_response():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Celebration")
+    completed = _sales_turn(workflow, "25/08/2026, 25", selected.context)
+    assert completed.context.details.preferred_date.isoformat() == "2026-08-25"
+    assert completed.context.details.total_guests == 25
+    assert completed.context.last_service_code == "pontoon_celebration"
+    assert completed.safe_metadata["graph_answer_source"] == "pontoon_post_qualification"
+    assert completed.safe_metadata["pontoon_package_content_configured"] is True
+    assert "noted the celebration details" not in completed.draft_text.casefold()
+    assert "approved next step" not in completed.draft_text.casefold()
+
+
+def test_pontoon_past_date_rejected_but_valid_guest_count_is_retained():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Celebration")
+    result = _sales_turn(workflow, "15/08/2026, 25", selected.context)
+    assert result.context.details.preferred_date is None
+    assert result.context.details.total_guests == 25
+    assert result.context.pending_field == "preferred_date"
+    assert result.safe_metadata["past_date_rejected"] is True
+    assert "already passed" in result.draft_text.casefold()
+    assert "guest" not in result.draft_text.casefold()
+
+
+def test_pontoon_question_interruption_and_explicit_service_switch_preserve_durable_facts():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Boat Celebration")
+    qualified = _sales_turn(workflow, "25 August, 6 people", selected.context)
+    duration = _sales_turn(workflow, "duration?", qualified.context)
+    assert duration.context.last_service_code == "pontoon_celebration"
+    assert duration.context.details.preferred_date == qualified.context.details.preferred_date
+    assert duration.context.details.total_guests == 6
+    assert "what date" not in duration.draft_text.casefold() and "how many" not in duration.draft_text.casefold()
+
+    switched = _sales_turn(workflow, "Tell me about Staycation", duration.context)
+    assert switched.context.last_service_code == "staycation_combo"
+    assert switched.context.details.preferred_date == qualified.context.details.preferred_date
+    assert switched.context.details.total_guests == 6
+
+
+def test_pontoon_customization_handover_preserves_known_qualification():
+    workflow = _celebration_workflow()
+    selected = _sales_turn(workflow, "Pontoon Boat Celebration")
+    qualified = _sales_turn(workflow, "25 August, 6 people", selected.context)
+    handover = _sales_turn(workflow, "Can I customize the decoration and food?", qualified.context)
+    assert handover.human_handover_required is True
+    assert handover.context.last_service_code == "pontoon_celebration"
+    assert handover.context.details.preferred_date == qualified.context.details.preferred_date
+    assert handover.context.details.total_guests == 6

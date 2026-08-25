@@ -3,6 +3,7 @@
 from typing import Any
 
 from supabase import Client
+from app.services.latency import latency_counter
 
 
 class ConversationRepository:
@@ -14,6 +15,7 @@ class ConversationRepository:
     def get_or_create_open(self, customer_id: str) -> dict[str, Any]:
         """Return the current open conversation or create a bot-mode conversation."""
 
+        latency_counter("supabase_reads")
         existing_response = (
             self._client.table("conversations")
             .select("*")
@@ -26,6 +28,7 @@ class ConversationRepository:
         if existing_response is not None and isinstance(existing_response.data, dict):
             return existing_response.data
 
+        latency_counter("supabase_writes")
         response = self._client.table("conversations").insert(
             {"customer_id": customer_id, "state": "new", "mode": "bot"}
         ).execute()
@@ -34,6 +37,7 @@ class ConversationRepository:
     def get_open(self, customer_id: str) -> dict[str, Any] | None:
         """Return the customer's open conversation without creating one."""
 
+        latency_counter("supabase_reads")
         response = (
             self._client.table("conversations")
             .select("*")
@@ -48,6 +52,7 @@ class ConversationRepository:
     def get_service_context(self, conversation_id: str, customer_id: str) -> dict[str, Any] | None:
         """Return context only for the exact customer-owned conversation."""
 
+        latency_counter("supabase_reads")
         response = (
             self._client.table("conversations")
             .select("customer_id,service_context")
@@ -62,9 +67,17 @@ class ConversationRepository:
         context = data.get("service_context")
         return context if isinstance(context, dict) else None
 
+    def belongs_to_customer(self, conversation_id: str, customer_id: str) -> bool:
+        response = (self._client.table("conversations").select("id")
+                    .eq("id", conversation_id).eq("customer_id", customer_id)
+                    .maybe_single().execute())
+        data = getattr(response, "data", None)
+        return isinstance(data, dict) and data.get("id") == conversation_id
+
     def save_service_context(self, conversation_id: str, customer_id: str, context: dict[str, Any]) -> bool:
         """Persist only the exact structured context for its owning conversation."""
 
+        latency_counter("supabase_writes")
         response = (
             self._client.table("conversations")
             .update({"service_context": context})

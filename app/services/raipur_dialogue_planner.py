@@ -6,9 +6,12 @@ import re
 from typing import Any, Callable, Literal
 
 from app.services.raipur_services import approved_primary_service_from_question, approved_service_from_message
+from app.services.raipur.topic_resolver import resolve_topic
+from app.services.raipur.category_handler import is_service_catalogue_request
+from app.services.raipur.contact_handler import is_contact_information_request
 
 
-Intent = Literal["greeting", "service_list", "service_overview", "service_more_details", "service_full_overview", "service_definition", "service_detail", "service_confirmation", "service_correction", "service_operation_question", "participation_eligibility", "live_availability", "restricted", "general"]
+Intent = Literal["greeting", "contact_information", "service_list", "service_overview", "service_more_details", "service_full_overview", "service_definition", "service_detail", "service_confirmation", "service_correction", "service_operation_question", "participation_eligibility", "live_availability", "restricted", "general"]
 AnswerMode = Literal["service_list", "general_definition", "active_rag", "clarification", "live_availability", "restricted_handover", "general"]
 
 
@@ -46,6 +49,8 @@ _SERVICE_CATALOGUE_QUESTION = re.compile(
     r"|\bwhat\s+else\s+do\s+you\s+have\b"
     r"|\b(?:aur\s+(?:kaun\s+si|kaun\s+kaun)\s+)?(?:rides?|activities)\s+(?:hain|hai|batao)\b"
     r"|\b(?:konsi|kaunsi)\s+service\b"
+    r"|\b(?:water\s+)?activities?\s+(?:info|information|batao|share)\b"
+    r"|\bwater\s+activities?\s+(?:kaun\s+si|kaunsi|kya)\b"
     r"|\b(?:services?\s+available|rides?\s+hain|activities\s+milti|rides?\s+ki\s+list|what\s+services\s+do\s+you\s+offer)\b",
     re.I,
 )
@@ -59,15 +64,7 @@ def is_participation_eligibility_question(text: str) -> bool:
 
 def is_service_catalogue_question(text: str) -> bool:
     """Return true only for an unqualified request for multiple services."""
-
-    return (
-        isinstance(text, str)
-        and approved_primary_service_from_question(text) is None
-        # "How many rides are included?" is a package-inclusions follow-up,
-        # not a request for the catalogue, even without a new service name.
-        and not bool(re.search(r"\b(?:included|include|inclusion|comes\s+with|isme)\b", text, re.I))
-        and bool(_SERVICE_CATALOGUE_QUESTION.search(text))
-    )
+    return isinstance(text, str) and is_service_catalogue_request(text)
 
 
 class RaipurDialoguePlanner:
@@ -103,6 +100,8 @@ def _deterministic(request: dict[str, Any], context: Any) -> DialoguePlan:
     lang = request["language"]
     if text.strip() in {"hi", "hii", "hello", "hey", "namaste"}:
         return DialoguePlan(intent="greeting", answer_mode="general", language=lang)
+    if is_contact_information_request(text):
+        return DialoguePlan(intent="contact_information", answer_mode="general", language=lang)
     if is_service_catalogue_question(text):
         return DialoguePlan(intent="service_list", answer_mode="service_list", language=lang)
     if service and is_participation_eligibility_question(text):
@@ -133,12 +132,15 @@ def _deterministic(request: dict[str, Any], context: Any) -> DialoguePlan:
 
 
 def _service_question_topic(text: str) -> str | None:
+    """Compatibility wrapper for the shared topic resolver."""
+    return resolve_topic(text).topic
+
     topics = (
         ("self_driving", ("drive", "myself", "self driven", "self-driven", "operate", "control")),
         ("swimming_requirement", ("swim", "swimming", "swimming aana", "non-swimmer", "swimming nahi aati", "swimming zaruri", "tairna", "tair sakte", "swim karna")),
         ("pregnancy", ("pregnant", "pregnancy", "pregnent", "pregnency", "pragnant")),
         ("fall_safety", ("fall", "falls", "fell")),
-        ("capacity", ("how many", "capacity", "people can ride", "persons", "kitne log", "kitne aadmi", "kitne guest", "kitne person", "ek baar mein kitne", "ek ride mein kitne", "beth sakte", "baith sakte", "single or double", "solo or tandem")),
+        ("capacity", ("how many", "how many people can sit", "capacity", "people can ride", "persons", "kitne log", "kitna log", "kitne aadmi", "kitna aadmi", "kitne guest", "kitne person", "maximum kitne", "minimum kitne", "aa sakte", "ja sakte", "ek baar mein kitne", "ek ride mein kitne", "beth sakte", "baith sakte", "single or double", "solo or tandem", "à¤•à¤¿à¤¤à¤¨à¥‡ à¤²à¥‹à¤—", "à¤†à¤¦à¤®à¥€ à¤¬à¥ˆà¤ ")),
         ("duration", ("how long", "duration", "minutes", "time does", "kitni der", "kitne minute", "kitna time", "kitne time", "ride time", "session time")),
         ("inclusions", ("included", "include", "inclusion", "breakfast", "what comes with", "kya included", "isme kya milega", "isme kya milta", "kya kya milta", "package mein kya", "activities included", "rides included")),
         ("eligibility", ("who can participate", "age limit", "child allowed", "bacche kar", "kaun kar sakta", "allowed hai", "height", "weight", "suitable for")),

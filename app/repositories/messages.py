@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from supabase import Client
 
 from app.schemas.exotel_webhook import NormalizedInboundMessage
+from app.services.latency import latency_counter
 
 
 class DuplicateMessageError(Exception):
@@ -38,6 +39,7 @@ class MessageRepository:
             "received_at": message.received_at.isoformat(),
         }
         try:
+            latency_counter("supabase_writes")
             response = self._client.table("messages").insert(record).execute()
         except Exception as error:
             if getattr(error, "code", None) == "23505":

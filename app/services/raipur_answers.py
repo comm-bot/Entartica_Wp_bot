@@ -123,7 +123,12 @@ def _factual_lines(content: str) -> list[str]:
             continue
         if _METADATA_PREFIX.match(line) or "approved for chatbot ingestion" in normalized:
             continue
-        if re.search(r"\b(source|filename|document\s+id|chunk\s+id|confidence|embedding|retrieval\s+score)\b", line, re.IGNORECASE):
+        # Reject retrieval metadata only when it is itself the line's label.
+        # Approved celebration sections use the customer-safe heading
+        # "Confirmed from Source Documents" to distinguish guaranteed facts
+        # from optional add-ons; treating every occurrence of "source" as
+        # metadata incorrectly erased that approved content.
+        if re.match(r"^\s*(?:source|filename|document\s+id|chunk\s+id|confidence|embedding|retrieval\s+score)\b", line, re.IGNORECASE):
             continue
         if re.search(r"\.(?:docx?|pdf)\b", line, re.IGNORECASE) or "/" in line or "\\" in line:
             continue
@@ -175,7 +180,7 @@ def _topic(question: str) -> str:
     value = question.casefold()
     topics = {
         "capacity": ("capacity", "how many", "kitne", "people", "guests", "beth sakte"),
-        "duration": ("duration", "how long", "kitna time", "minutes", "hours"),
+        "duration": ("duration", "how long", "kitna time", "minutes", "hours", "extend", "extension"),
         "inclusions": ("include", "included", "inclusion", "what is included"),
         "swimming": ("swimming", "swim"),
         "safety": ("safety", "safe", "life jacket", "pregnan", "medical"),

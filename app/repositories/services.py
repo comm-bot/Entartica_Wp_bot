@@ -5,6 +5,7 @@ from typing import Any
 from supabase import Client
 
 from app.services.raipur_services import normalize_service_text
+from app.services.latency import latency_counter
 
 
 class ServiceRepository:
@@ -16,6 +17,7 @@ class ServiceRepository:
     def list_active_for_location(self, location_id: str) -> list[dict[str, Any]]:
         """Return active services for a location, ordered by name."""
 
+        latency_counter("supabase_reads")
         response = (
             self._client.table("services")
             .select("*")

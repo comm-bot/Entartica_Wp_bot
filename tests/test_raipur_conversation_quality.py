@@ -70,7 +70,7 @@ def test_raipur_city_clarification_is_bound_and_repair_keeps_city_scope():
 def test_self_introduction_h2o_and_frustration_are_specific_not_menu_responses():
     service = _service()
     intro = _process(service, "Phly apne bare me btao")
-    assert intro.reason_code == "self_introduction" and "virtual assistant" in intro.draft_text.casefold() and "jet ski" not in intro.draft_text.casefold()
+    assert intro.reason_code == "self_introduction" and "chiki" in intro.draft_text.casefold() and "virtual assistant" not in intro.draft_text.casefold() and "jet ski" not in intro.draft_text.casefold()
     h2o = _process(service, "H2O Play Park kya hai")
     assert h2o.reason_code == "service_detail_unavailable" and "detailed approved information" in h2o.draft_text.casefold()
     angry = _process(service, "Tm bewkuf ho", h2o.context)
@@ -97,7 +97,7 @@ def test_identity_questions_are_deterministic_fast_paths_and_ignore_stale_servic
         assert result.safe_metadata["rag_called"] is False and result.safe_metadata["openai_called"] is False
         assert "entartica sea world" in result.draft_text.casefold()
         assert "jetty gazebo" not in result.draft_text.casefold()
-        assert "i'm entartica sea world's virtual assistant" in result.draft_text.casefold() or "main entartica sea world ka virtual assistant" in result.draft_text.casefold()
+        assert "chiki" in result.draft_text.casefold() and "virtual assistant" not in result.draft_text.casefold()
     assert knowledge.calls == 0
 
 

@@ -32,6 +32,24 @@ class SalesContact:
     def details(self) -> str:
         return f"📞 Call: {self.display_phone}\n✉️ Email: {self.email}"
 
+    @property
+    def compact_display_phone(self) -> str:
+        """Approved display derived from the configured E.164 value."""
+        digits = "".join(character for character in self.phone if character.isdigit())
+        if len(digits) == 12 and digits.startswith("91"):
+            return f"+91 {digits[2:]}"
+        return self.phone
+
+
+def approved_contact_information(contact: SalesContact, language: str) -> str:
+    """Answer an explicit contact request from configured approved details."""
+    lead = (
+        "Aap Entartica Sea World team se yahan contact kar sakte hain:"
+        if language == "hinglish"
+        else "You can contact the Entartica Sea World team at:"
+    )
+    return f"{lead}\n\nPhone: {contact.compact_display_phone}\nEmail: {contact.email}"
+
 
 def approved_safe_fallback(contact: SalesContact, language: str) -> str:
     if language == "hinglish":

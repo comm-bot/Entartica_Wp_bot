@@ -56,7 +56,7 @@ python scripts/ingest_raipur_knowledge.py
 
 The unified ingester stages a replacement, verifies its chunks, then activates it and deactivates only the prior active version of the same source file. It never deletes knowledge rows. `scripts/ingest_raipur_celebrations.py` is deliberately disabled legacy tooling, so it cannot create competing active documents.
 
-The canonical customer-facing Raipur corpus is the active Markdown set under `documents/raipur/active`; all 16 services, including celebration services, live under `active/services`. Legacy DOCX files are retained under `documents/raipur/reference_archive/source_documents`, and governance CSVs are retained under `documents/raipur/governance`; neither is embedded. Generate the local inventory and optional read-only database comparison with:
+The canonical customer-facing Raipur corpus is the active Markdown set under `documents/raipur/active`; all 19 services, including celebration services, live under `active/services`. Legacy DOCX files are retained under `documents/raipur/reference_archive/source_documents`, and governance CSVs are retained under `documents/raipur/governance`; neither is embedded. Generate the local inventory and optional read-only database comparison with:
 
 ```powershell
 python scripts/audit_raipur_knowledge_inventory.py

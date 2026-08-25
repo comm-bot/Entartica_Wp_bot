@@ -1,0 +1,58 @@
+{
+  "version": "chiki_sales_v1",
+  "example_counts": {
+    "train": 80,
+    "validation": 20,
+    "holdout": 20
+  },
+  "total_examples": 120,
+  "response_goal_distribution": {
+    "celebration_discovery": 12,
+    "ask_date": 9,
+    "ask_preference": 9,
+    "service_recommendation": 12,
+    "service_overview": 32,
+    "service_more_details": 15,
+    "factual_answer": 26,
+    "activity_discovery": 4,
+    "family_discovery": 1
+  },
+  "language_distribution": {
+    "hi": 36,
+    "en": 42,
+    "hinglish": 42
+  },
+  "service_coverage": [
+    "aqua_cycle",
+    "bumper_boat",
+    "daycation_package",
+    "floating_gazebo",
+    "houseboat_celebration",
+    "inflatable_sofa_ride",
+    "jet_ski_ride",
+    "jetty_gazebo",
+    "kayaking",
+    "kids_bumper_boat",
+    "kids_paddle_boat",
+    "party_boat_celebration",
+    "pontoon_boat_ride",
+    "pontoon_celebration",
+    "speed_boat_ride",
+    "staycation_combo",
+    "water_bike",
+    "zorbing_ball"
+  ],
+  "safety_unknown_examples": 6,
+  "h2o_examples": 14,
+  "recommendation_examples": 12,
+  "qualification_examples": 18,
+  "created_from": [
+    "SalesResponseBrief",
+    "CustomerFacts",
+    "approved Raipur service catalogue",
+    "governed duration/access facts"
+  ],
+  "validation_status": "passed_offline_validation",
+  "contains_customer_pii": false,
+  "external_upload": false
+}

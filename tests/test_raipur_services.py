@@ -45,7 +45,7 @@ def _approved_rows(*, active: bool = True) -> list[dict[str, object]]:
 
 
 def test_manifest_contains_only_safe_approved_service_fields() -> None:
-    assert len(APPROVED_RAIPUR_SERVICES) == 16
+    assert len(APPROVED_RAIPUR_SERVICES) == 19
     assert {item.slug for item in APPROVED_RAIPUR_SERVICES} == {item.slug for item in APPROVED_RAIPUR_SERVICES}
     assert SOURCE_FILENAME == "raipur_services.docx"
     assert all(not any(word in item.name.casefold() for word in ("price", "payment", "availability")) for item in APPROVED_RAIPUR_SERVICES)
@@ -53,11 +53,11 @@ def test_manifest_contains_only_safe_approved_service_fields() -> None:
 
 def test_verifier_reports_missing_active_inactive_duplicate_and_unexpected_services() -> None:
     missing = verify_script.inspect_raipur_services(_Client([_location()], []))
-    assert missing["reason"] == "approved_services_missing" and missing["missing_approved_services"] == 16
+    assert missing["reason"] == "approved_services_missing" and missing["missing_approved_services"] == 19
     ready = verify_script.inspect_raipur_services(_Client([_location()], _approved_rows()))
-    assert ready["reason"] == "ready" and ready["active_matching_services"] == 16
+    assert ready["reason"] == "ready" and ready["active_matching_services"] == 19
     inactive = verify_script.inspect_raipur_services(_Client([_location()], _approved_rows(active=False)))
-    assert inactive["inactive_matching_services"] == 16
+    assert inactive["inactive_matching_services"] == 19
     duplicate_rows = _approved_rows() + [{"id": "duplicate", "name": APPROVED_RAIPUR_SERVICES[0].name, "slug": APPROVED_RAIPUR_SERVICES[0].slug, "is_active": True}]
     duplicate = verify_script.inspect_raipur_services(_Client([_location()], duplicate_rows))
     assert duplicate["reason"] == "duplicate_raipur_services_require_review"
@@ -82,6 +82,14 @@ def test_exact_normalized_matching_excludes_inactive_other_location_and_ambiguou
     duplicate_query = MagicMock(); duplicate_query.select.return_value = duplicate_query; duplicate_query.eq.return_value = duplicate_query; duplicate_query.order.return_value = duplicate_query; duplicate_query.execute.return_value = _Response([active, active | {"id": "boat-two"}])
     duplicate_client = MagicMock(); duplicate_client.table.return_value = duplicate_query
     assert ServiceRepository(duplicate_client).find_active_by_customer_text("raipur", "Pontoon Boat") is None
+
+
+def test_normalize_service_text_corrects_known_typos() -> None:
+    assert normalize_service_text("party baot") == "party boat"
+    assert normalize_service_text("kayk") == "kayak"
+    assert normalize_service_text("aqua cyle") == "aqua cycle"
+    assert normalize_service_text("bumber") == "bumper"
+    assert normalize_service_text("bumber boat") == "bumper boat"
 
 
 class _BookingRepository:

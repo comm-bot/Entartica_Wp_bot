@@ -23,3 +23,5 @@ def test_health_check_returns_ok() -> None:
     assert payload["active_conversation_engine"] in {"legacy", "langgraph"}
     assert isinstance(payload["raipur_langgraph_enabled"], bool)
     assert isinstance(payload["raipur_langgraph_comparison_mode"], bool)
+    assert isinstance(payload["coimbatore_langgraph_enabled"], bool)
+    assert payload["active_coimbatore_engine"] in {"legacy", "langgraph"}

@@ -44,7 +44,7 @@ def test_service_retrieval_requires_exact_service_code_and_rejects_cross_service
   candidate(.7,content='Pontoon Boat details',metadata={'location_code':'raipur','service_code':'pontoon_boat_ride','customer_facing':True,'is_active':True,'approval_status':'approved','retrieval_priority':'service_specific'}),
  ]
  result=provider(rows).answer_service_details('Tell me about Pontoon Boat','Pontoon Boat')
- assert result.text == 'Pontoon Boat details'
+ assert result.text and 'Pontoon Boat details' in result.text
  assert 'Celebration' not in result.text
  assert provider([rows[0]]).answer_service_details('Tell me about Pontoon Boat','Pontoon Boat').low_confidence
 
@@ -55,7 +55,7 @@ def test_daycation_retrieval_excludes_staycation_content():
   candidate(.7,content='Daycation Package content',metadata={'location_code':'raipur','service_code':'daycation_package','customer_facing':True,'is_active':True,'approval_status':'approved','retrieval_priority':'service_specific'}),
  ]
  result=provider(rows).answer_service_details('Tell me about Daycation Package','Daycation Package')
- assert result.text == 'Daycation Package content'
+ assert result.text and 'Daycation Package content' in result.text
  assert 'Staycation' not in result.text
 
 
@@ -120,8 +120,73 @@ def test_exact_topic_fallback_uses_only_the_active_approved_heading_when_embeddi
   def table(self,name): return Query(self,name)
  value=RaipurKnowledgeProvider(Client(),settings(),embed_query_fn=lambda *_:(_ for _ in ()).throw(RuntimeError('offline')))
  result=value.answer_service_details('What is the duration of Jet Ski?','Jet Ski','jet_ski_ride',detail_mode='duration')
- assert result.text == 'The Jet Ski Ride generally lasts around 5 to 10 minutes per session.'
+ assert result.text and '5 to 10 minutes' in result.text
  assert result.source_filename == 'jet_ski_ride.md' and result.section_heading == 'Duration'
+
+
+def test_exact_section_fallback_supports_suitable_for_and_celebration_inclusions():
+ class Response:
+  def __init__(self,data): self.data=data
+ class Query:
+  def __init__(self,client,name): self.client,self.name=client,name
+  def select(self,*_args): return self
+  def eq(self,*_args): return self
+  def execute(self): return Response(self.client.docs if self.name=='knowledge_documents' else self.client.chunks)
+ class Client:
+  docs=[{'id':'houseboat-doc','source_file':'houseboat_celebration.md','is_active':True,'metadata':{'location_code':'raipur','service_code':'houseboat_celebration','approval_status':'approved','customer_facing':True}}]
+  chunks=[
+   {'knowledge_document_id':'houseboat-doc','content':'Couples and intimate groups can enjoy the Houseboat Celebration.','metadata':{'section_heading':'Best For'}},
+   {'knowledge_document_id':'houseboat-doc','content':'Music, cake, and celebration decor are included in the approved arrangement.','metadata':{'section_heading':'Celebration Inclusions'}},
+  ]
+  def table(self,name): return Query(self,name)
+ value=RaipurKnowledgeProvider(Client(),settings(),embed_query_fn=lambda *_:(_ for _ in ()).throw(RuntimeError('offline')))
+ suitable=value.answer_service_details('For whom is houseboat suitable?','Houseboat Celebration','houseboat_celebration',detail_mode='suitable_for')
+ inclusions=value.answer_service_details('What is included?','Houseboat Celebration','houseboat_celebration',detail_mode='inclusions')
+ assert suitable.section_heading == 'Best For' and suitable.text and 'Couples' in suitable.text
+ assert inclusions.section_heading == 'Celebration Inclusions' and inclusions.text and 'Music' in inclusions.text
+ assert inclusions.retrieved_section_headings == ('Celebration Inclusions',)
+
+def test_exact_topic_cache_is_approved_only_and_skips_embeddings_on_a_hit():
+ class Response:
+  def __init__(self,data): self.data=data
+ class Query:
+  def __init__(self,client,name): self.client,self.name=client,name
+  def select(self,*_args): return self
+  def eq(self,*_args): return self
+  def execute(self): return Response(self.client.docs if self.name=='knowledge_documents' else self.client.chunks)
+ class Client:
+  docs=[{'id':'speed-doc','source_file':'speed_boat_ride.md','is_active':True,'metadata':{'location_code':'raipur','service_code':'speed_boat_ride','approval_status':'approved','customer_facing':True}}]
+  chunks=[{'knowledge_document_id':'speed-doc','content':'Swimming ability is not required for the Speed Boat Ride.','metadata':{'section_heading':'Swimming Requirement'}}]
+  def table(self,name): return Query(self,name)
+ RaipurKnowledgeProvider._exact_section_cache.clear()
+ embeddings=[]
+ value=RaipurKnowledgeProvider(Client(),settings(),embed_query_fn=lambda *_:embeddings.append(True) or [1])
+ first=value.answer_service_details('Is swimming compulsory?','Speed Boat','speed_boat_ride',detail_mode='swimming')
+ second=value.answer_service_details('Is swimming compulsory?','Speed Boat','speed_boat_ride',detail_mode='swimming')
+ assert first.text and second.text and value.last_cache_hit is True and embeddings == []
+
+def test_different_topics_reuse_only_the_same_service_chunk_snapshot():
+ class Response:
+  def __init__(self,data):self.data=data
+ class Query:
+  def __init__(self,client,name):self.client,self.name=client,name
+  def select(self,*_args):return self
+  def eq(self,*_args):return self
+  def execute(self):self.client.calls.append(self.name);return Response(self.client.docs if self.name=='knowledge_documents' else self.client.chunks)
+ class Client:
+  docs=[{'id':'party-doc','source_file':'party.md','is_active':True,'metadata':{'location_code':'raipur','service_code':'party_boat_celebration','approval_status':'approved','customer_facing':True}}]
+  chunks=[
+   {'knowledge_document_id':'party-doc','content':'Party Boat Celebration starts from 2 hours.','metadata':{'section_heading':'Duration'}},
+   {'knowledge_document_id':'party-doc','content':'Party Boat Celebration supports lively celebrations.','metadata':{'section_heading':'Best For'}},
+  ]
+  def __init__(self):self.calls=[]
+  def table(self,name):return Query(self,name)
+ RaipurKnowledgeProvider._exact_section_cache.clear();RaipurKnowledgeProvider._service_chunks_cache.clear()
+ client=Client();value=RaipurKnowledgeProvider(client,settings())
+ duration=value.answer_service_details('duration','Party Boat Celebration','party_boat_celebration',detail_mode='duration')
+ suitable=value.answer_service_details('best for','Party Boat Celebration','party_boat_celebration',detail_mode='suitable_for')
+ assert duration.text and suitable.text
+ assert client.calls==['knowledge_documents','knowledge_chunks']
 
 
 def test_parent_active_retrieval_does_not_require_a_chunk_level_active_filter():

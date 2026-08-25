@@ -76,7 +76,19 @@ def test_centralized_prompt_is_the_single_runtime_prompt_definition():
 
     assert RAIPUR_SYSTEM_PROMPT
     assert RAIPUR_CONVERSATIONAL_FALLBACK_SYSTEM_PROMPT is RAIPUR_SYSTEM_PROMPT
-    assert "retrieved context is authoritative" in RAIPUR_SYSTEM_PROMPT.casefold()
+    assert "approved facts supplied with the current request are your only factual authority" in RAIPUR_SYSTEM_PROMPT.casefold()
+
+
+def test_system_prompt_uses_chiki_sales_concierge_tone_with_safeguards():
+    text = RAIPUR_SYSTEM_PROMPT.casefold()
+    assert "chiki" in text
+    assert "customer-facing sales host" in text
+    assert "virtual assistant" not in text
+    assert "ai assistant" not in text
+    assert "approved facts supplied with the current request are your only factual authority" in text
+    assert "ask a maximum of one main sales question" in text
+    assert "never invent an entartica fact" in text
+    assert "controlled handover is required" in text
 
 
 @pytest.mark.parametrize("question", ["Anything fun?", "Mujhe kuch fun chahiye", "कुछ मज़ेदार चाहिए", "I wnt somthing fun"])

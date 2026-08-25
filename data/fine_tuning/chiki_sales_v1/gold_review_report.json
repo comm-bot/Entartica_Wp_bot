@@ -1,0 +1,70 @@
+{
+  "gold_responses_reviewed": 120,
+  "gold_responses_revised": 34,
+  "needs_human_review": 0,
+  "top_first_phrases": [
+    [
+      "a lovely highlight",
+      5
+    ],
+    [
+      "inflatable sofa ride",
+      4
+    ],
+    [
+      "kids bumper boat",
+      4
+    ],
+    [
+      "श नद र",
+      3
+    ],
+    [
+      "perfect i've noted",
+      3
+    ],
+    [
+      "great that helps",
+      3
+    ],
+    [
+      "बह त बढ",
+      3
+    ],
+    [
+      "आपक relaxed पस",
+      2
+    ],
+    [
+      "jet ski is",
+      2
+    ],
+    [
+      "kids paddle boat",
+      2
+    ],
+    [
+      "houseboat celebration क",
+      2
+    ],
+    [
+      "bumper boat क",
+      2
+    ]
+  ],
+  "holdout_objective_reference_metrics": {
+    "examples": 20,
+    "factual_grounding": 100.0,
+    "service_name_accuracy": 100.0,
+    "next_question_compliance": 100.0,
+    "unsupported_claim_free": 100.0,
+    "governance_leakage_free": 100.0,
+    "language_match": 100.0,
+    "conciseness": 100.0,
+    "sales_tone_quality": "requires_human_or_model_evaluation",
+    "raw_kb_like_rate": "requires_human_or_model_evaluation"
+  },
+  "current_composer_baseline_executed": false,
+  "current_composer_baseline_reason": "requires external OpenAI calls",
+  "dataset_valid": true
+}

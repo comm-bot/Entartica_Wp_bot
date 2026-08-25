@@ -1,10 +1,10 @@
 """Draft-only Raipur inbound orchestration; it has no Exotel or provider-send path."""
 from __future__ import annotations
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 import re
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.schemas.exotel_webhook import NormalizedInboundMessage
@@ -15,82 +15,31 @@ from app.services.raipur_answers import compose_customer_response
 from app.services.raipur_conversational_fallback import RaipurConversationalFallback
 from app.services.raipur_dialogue_planner import RaipurDialoguePlanner, is_participation_eligibility_question, _service_question_topic
 from app.services.raipur_sales_contact import SalesContact, approved_safe_fallback, booking_sales_handover, controlled_sales_handover, direct_human_handover
+from app.services.raipur.category_handler import (
+    celebration_service_list_answer,
+    handle_raipur_category_request,
+    is_celebration_category_request,
+    is_package_category_request,
+    is_service_catalogue_request,
+    package_service_list_answer,
+    service_list_answer,
+)
+from app.services.raipur.response_models import Action, ConversationContext, ConversationResult, KnowledgeDraft
+from app.services.raipur.service_resolver import resolve_service
+from app.services.raipur.language import detect_language
+from app.services.raipur.greeting_handler import greeting_response
+from app.services.raipur.location_handler import is_location_question, structured_location_answer
+from app.services.raipur.context_state import resolve_service_turn
 from app.config import get_settings
 from app.services.latency import latency_stage
 
 logger = logging.getLogger("uvicorn.error")
-
-Action = Literal["answer_information", "ask_booking_field", "check_availability", "booking_enquiry_saved", "pricing_sales_handover", "unsupported_location_handover", "low_confidence_handover", "general_human_handover"]
-
-@dataclass(frozen=True)
-class KnowledgeDraft:
-    text: str | None
-    source_filename: str | None = None
-    confidence: float | None = None
-    low_confidence: bool = True
-    section_heading: str | None = None
-    retrieval_result_count: int | None = None
-    source_document_id: str | None = None
-    retrieved_section_headings: tuple[str, ...] = ()
 
 class KnowledgeAnswerProvider(Protocol):
     def answer(self, question: str) -> KnowledgeDraft: ...
 
 class DraftRepository(Protocol):
     def create_outbound_draft(self, **kwargs: Any) -> tuple[dict[str, Any], bool]: ...
-
-@dataclass(frozen=True)
-class ConversationContext:
-    details: BookingDetails
-    pending_field: str | None = None
-    availability_requested: bool = False
-    last_service_name: str | None = None
-    last_service_code: str | None = None
-    last_intent: str | None = None
-    last_bot_action: str | None = None
-    service_selection_prompted: bool = False
-    service_details_requested: bool = False
-    active_domain: str = "entartica"
-    active_topic: str | None = None
-    active_entity_type: str | None = None
-    active_entity_name: str | None = None
-    last_user_intent: str | None = None
-    last_assistant_answer_summary: str | None = None
-    pending_clarification: bool = False
-    pending_clarification_type: str | None = None
-    pending_clarification_options: tuple[str, ...] = ()
-    preferred_language: str | None = None
-    last_assistant_question: str | None = None
-    pending_question_type: str | None = None
-    pending_action: str | None = None
-    pending_entity_type: str | None = None
-    pending_entity_name: str | None = None
-    pending_created_at: str | None = None
-    pending_service_code: str | None = None
-    pending_slots: dict[str, str | None] | None = None
-    last_answer_source: str | None = None
-    last_answer_sections: tuple[str, ...] = ()
-
-@dataclass(frozen=True)
-class ConversationResult:
-    action: Action
-    draft_text: str
-    reason_code: str
-    detected_intent: str
-    detected_location: str
-    response_language: str
-    human_handover_required: bool
-    booking_enquiry_created: bool = False
-    booking_enquiry_updated: bool = False
-    availability_status: str | None = None
-    next_required_field: str | None = None
-    draft_only: bool = True
-    draft_saved: bool = False
-    context: ConversationContext | None = None
-    safe_metadata: dict[str, Any] | None = None
-    template_key: str | None = None
-    response_valid: bool = True
-    response_validation_reason: str = "safe"
 
 _PRICING = re.compile(r"\b(price|pricing|quotation|quote|rate|cost)\b", re.I)
 _AVAILABILITY = re.compile(r"\b(slot|availability|available)\b", re.I)
@@ -105,8 +54,6 @@ _DIRECT_CONTACT = re.compile(
 )
 _UNSUPPORTED = re.compile(r"\b(in|at)\s+(indore|delhi)\b", re.I)
 _LOCATION_QUESTION = re.compile(r"\b(where|located|location|address|map|kahan|kahaan)\b|\u0915\u0939\u093e\u0901", re.I)
-_SERVICE_LIST_QUESTION = re.compile(r"\b(?:various|different|all|available|list|options?|show|tell\s+me)\b[^.?!]{0,40}\b(?:rides?|activities|services?)\b|\b(?:rides?|activities|services?)\b[^.?!]{0,30}\b(?:available|list|options?|hain|hai|batao)\b|\bwhat\s+(?:are\s+the\s+)?rides\b|\bhow\s+many\s+(?:rides|activities|services)\b|\b(?:can\s+you\s+provide|show\s+me|any)\s+(?:other\s+)?(?:rides?|activities|services?)\b|\bwhat\s+else\s+do\s+you\s+have\b|\b(?:aur\s+(?:kaun\s+si|kaun\s+kaun)\s+)?(?:rides?|activities)\s+(?:hain|hai|batao)\b|\bdusri\s+rides?|baaki\s+rides?|aur\s+kya\s+hai\b|\braipur\s+(ki|mein)\s+(activity|activities|services?)\s+(kya|hain|hai)\b", re.I)
-_CELEBRATION_LIST_QUESTION = re.compile(r"\b(celebration|party|birthday)\b.*\b(options?|services?|activities|available|offer|book)\b|\b(what|which|show|list)\b.*\b(celebration|party)\b|\b(celebration|party)\s+(options?|services?)\s*(kya|hain|hai|batao)\b|\bparty\s+ke\s+liye\b|\u0938\u0947\u0932\u093f\u092c\u094d\u0930\u0947\u0936\u0928.*\u0935\u093f\u0915\u0932\u094d\u092a", re.I)
 _LIVE_AVAILABILITY_SIGNAL = re.compile(r"\b(today|tomorrow|tonight|date|time|slot|seats?|capacity|am|pm|aaj|kal)\b", re.I)
 _SERVICE_DETAIL = re.compile(r"\b(tell me about|information about|give (?:me )?(?:information|details)|details? (?:of|about)|what can you tell me about|want to (?:know|learn) about|(?:can i )?know more(?: about it)?|more information (?:on|about) (?:this|it)|how many (?:rides|activities|services) are included|ke baare mein|iske baare mein|aur information|tell me more|can you (?:give|explain)|can you tell (?:(?:me|em) )?more|give me|details do|aur batao|what is included|is breakfast included|what about children|how long is it|is swimming required|more information please|iska detail batao)\b|\u0907\u0938\u0915\u0947\s+\u092c\u093e\u0930\u0947\s+\u092e\u0947\u0902|\u0907\u0938\u0915\u0940\s+\u092a\u0942\u0930\u0940\s+\u091c\u093e\u0928\u0915\u093e\u0930\u0940|\u0935\u093f\u0938\u094d\u0924\u093e\u0930\s+\u0938\u0947\s+\u092c\u0924\u093e\u0907\u090f", re.I)
 _SERVICE_CONFIRMATION = re.compile(r"\bdo\s+you\s+(?:offer|have)\b|\bis\s+.+\s+(?:offered|available\s+as\s+a\s+service)\b|\bkya\s+raipur\s+mein.+\b(?:hai|available)\b|\u0915\u094d\u092f\u093e\s+\u0930\u093e\u092f\u092a\u0941\u0930\s+\u092e\u0947\u0902.*\u0909\u092a\u0932\u092c\u094d\u0927|\u0915\u094d\u092f\u093e\s+.+\s+\u0939\u0948", re.I)
@@ -135,6 +82,10 @@ _ENQUIRY_RESTART = re.compile(r"\b(?:start\s+again|restart\s+(?:enquiry|booking)
 _AMBIGUOUS_SEATER = re.compile(r"\b(?:twin|twins|two|double)[ -]?seater\b", re.I)
 
 class RaipurConversationService:
+    # Deprecated compatibility engine. LangGraph is the production default;
+    # this path exists only for an explicit emergency rollback. Do not add
+    # routing or business logic here. Scheduled for removal after live
+    # acceptance and rollback-tag criteria are recorded.
     def __init__(self, *, knowledge: KnowledgeAnswerProvider, bookings: BookingEnquiryService, drafts: DraftRepository, services: Any | None = None, location: dict[str, Any] | None = None, timezone_name: str = "Asia/Kolkata", persist_drafts: bool = True, conversational_fallback: RaipurConversationalFallback | None = None, dialogue_planner: RaipurDialoguePlanner | None = None, sales_contact: SalesContact | None = None) -> None:
         self._knowledge, self._bookings, self._drafts = knowledge, bookings, drafts
         self._services, self._location = services, location
@@ -228,15 +179,44 @@ class RaipurConversationService:
         if _ENQUIRY_RESTART.search(routing_text):
             reset = replace(context, details=replace(context.details, requested_service_text=None, preferred_date=None, preferred_time=None, adults_count=None, children_count=None, total_guests=None, special_requirements=None, special_requirements_collected=False), pending_field="requested_service_text", pending_question_type=None, pending_action=None, availability_requested=False)
             return self._save("ask_booking_field", _ask("requested_service_text", language), "booking_detail_required", "booking", language, False, customer, conversation, source_message_id, reset, next_field="requested_service_text", metadata={"response_basis":"deterministic","customer_response_sanitized":True})
-        if _is_celebration_list_question(routing_text):
-            services = self._active_celebration_services(conversation.get("location_id"))
-            if services:
-                celebration_context = replace(_catalogue_context(context, "celebration_catalogue"), service_selection_prompted=True)
-                return self._save("answer_information", _celebration_service_list_answer(services, language), "structured_celebration_service_list", "celebration_service_list", language, False, customer, conversation, source_message_id, celebration_context, metadata=_structured_metadata(False, False, True) | {"automatic_reply_category": "services"})
-        if plan.intent == "service_list" or _is_service_list_question(routing_text):
+        category = handle_raipur_category_request(
+            routing_text,
+            language,
+            self._active_approved_services(conversation.get("location_id")),
+        )
+        if category.handled:
+            topic = "celebration_catalogue" if category.intent == "celebration_service_list" else (
+                "package_catalogue" if category.answer_source == "approved_package_catalogue" else "service_catalogue"
+            )
+            reason_code = {
+                "approved_celebration_catalogue": "structured_celebration_service_list",
+                "approved_package_catalogue": "structured_package_service_list",
+                "approved_activity_catalogue": "structured_service_list",
+            }.get(category.answer_source, "structured_service_catalogue")
+            category_context = _catalogue_context(context, topic)
+            if category.intent == "celebration_service_list":
+                category_context = replace(category_context, service_selection_prompted=True)
+            return self._save(
+                "answer_information",
+                category.response_text or "",
+                reason_code,
+                category.intent or "service_catalogue",
+                language,
+                False,
+                customer,
+                conversation,
+                source_message_id,
+                category_context,
+                metadata=_structured_metadata(False, False, True) | {
+                    "automatic_reply_category": "services",
+                    "answer_source": category.answer_source,
+                    "shared_handler_used": True,
+                },
+            )
+        if plan.intent == "service_list":
             services = self._active_approved_services(conversation.get("location_id"))
             if services:
-                return self._save("answer_information", _service_list_answer(services, language), "structured_service_list", "service_catalogue", language, False, customer, conversation, source_message_id, _catalogue_context(context, "service_catalogue"), metadata=_structured_metadata(False, False, True))
+                return self._save("answer_information", service_list_answer(services, language), "structured_service_list", "service_catalogue", language, False, customer, conversation, source_message_id, _catalogue_context(context, "service_catalogue"), metadata=_structured_metadata(False, False, True))
         if _AFFIRMATIVE.fullmatch(routing_text) and context.pending_question_type == "yes_no" and context.pending_action == "start_booking_enquiry":
             consent = replace(context, pending_question_type=None, pending_action=None)
             return self._booking("", consent, customer, conversation, source_message_id, language, now, availability_requested=False)
@@ -284,7 +264,13 @@ class RaipurConversationService:
             return self._save("unsupported_location_handover", _handover(language, self._sales_contact), "unsupported_location", "unsupported_location", language, True, customer, conversation, source_message_id, context)
         if _HUMAN.search(routing_text) and not _PRICING.search(routing_text):
             return self._save("general_human_handover", _handover(language, self._sales_contact), "human_support_required", "human", language, True, customer, conversation, source_message_id, context)
-        explicit_service = approved_primary_service_from_question(routing_text)
+        service_resolution = resolve_service(
+            routing_text,
+            context_service_code=context.last_service_code,
+            context_service_name=context.last_service_name,
+        )
+        explicit_service = service_resolution.service
+        context_decision = resolve_service_turn(context, service_code=service_resolution.service_code, service_name=service_resolution.service_name, topic=None, explicit_service=service_resolution.explicit_service)
         matched_service = explicit_service
         context_used = False
         venue_overview_requested = _is_venue_overview_question(routing_text, context)
@@ -302,17 +288,6 @@ class RaipurConversationService:
             matched_service is not None and _is_follow_up_availability_request(routing_text)
         )
         eligibility_requested = matched_service is not None and is_participation_eligibility_question(routing_text)
-        if _is_celebration_list_question(routing_text):
-            services = self._active_celebration_services(conversation.get("location_id"))
-            if services:
-                logger.info("intent_detected intent=celebration_service_list")
-                logger.info("deterministic_route_matched route=raipur_celebration_service_list")
-                celebration_context = replace(_catalogue_context(context, "celebration_catalogue"), last_intent="celebration_service_list", service_selection_prompted=True)
-                return self._save("answer_information", _celebration_service_list_answer(services, language), "structured_celebration_service_list", "celebration_service_list", language, False, customer, conversation, source_message_id, celebration_context, metadata=_structured_metadata(False, False, True) | {"deterministic_route": "raipur_celebration_service_list", "automatic_reply_category": "services", "awaiting_service_selection": True})
-        if plan.intent == "service_list" or _is_service_list_question(routing_text):
-            services = self._active_approved_services(conversation.get("location_id"))
-            if services:
-                return self._save("answer_information", _service_list_answer(services, language), "structured_service_list", "service_catalogue", language, False, customer, conversation, source_message_id, _catalogue_context(context, "service_catalogue"), metadata=_structured_metadata(False, False, True))
         previous_service_code = context.last_service_code
         if eligibility_requested and matched_service is not None:
             service_code = knowledge_service_code(matched_service)
@@ -409,7 +384,10 @@ class RaipurConversationService:
                 if detail is not None:
                     return self._save("answer_information", detail.text, "approved_service_full_overview", "service_full_overview", language, False, customer, conversation, source_message_id, full_context, metadata=_service_detail_metadata(detail, context_used) | {"automatic_reply_category": "information", "full_overview": True})
                 return self._save("answer_information", _service_detail_fallback(matched_service.name, language), "service_full_overview_unavailable", "service_full_overview", language, False, customer, conversation, source_message_id, full_context, metadata=_structured_metadata(True, approved_service_alias_used(text), True) | {"automatic_reply_category": "information", "conversation_service_context_used": context_used})
-        if matched_service is not None and not live_availability_requested and plan.answer_mode == "active_rag":
+        if matched_service is not None and not live_availability_requested and (
+            plan.answer_mode == "active_rag"
+            or (approved_service_alias_used(routing_text) and len(routing_text.split()) <= 3)
+        ):
             service = self._active_service(conversation.get("location_id"), matched_service)
             if service is not None:
                 service_code = knowledge_service_code(matched_service)
@@ -751,6 +729,9 @@ class RaipurConversationService:
     def _active_celebration_services(self, location_id: object) -> list[dict[str, Any]]:
         return [row for row in self._active_approved_services(location_id) if getattr(approved_service_from_message(row.get("name")), "category", None) == "floating_celebration"]
 
+    def _active_package_services(self, location_id: object) -> list[dict[str, Any]]:
+        return [row for row in self._active_approved_services(location_id) if getattr(approved_service_from_message(row.get("name")), "category", None) in {"package", "staycation_daycation"}]
+
     def _service_detail(self, text: str, service_name: str, *, contextual_follow_up: bool = False, full_overview: bool = False, detail_mode: str = "overview") -> KnowledgeDraft | None:
         try:
             method = getattr(self._knowledge, "answer_service_details", None)
@@ -802,6 +783,7 @@ class RaipurConversationService:
         return (knowledge.text,) if isinstance(knowledge.text, str) and knowledge.text.strip() else ()
 
 def _language(text: str) -> str:
+    return detect_language(text)
     if re.search(r"[\u0900-\u097f]", text): return "hi"
     if re.search(r"\b(kal|hai|kya|mein|ka|karna|karni|mujhe|kro|bhejo|nmbr)\b", text, re.I): return "hinglish"
     return "en"
@@ -821,9 +803,7 @@ def _language_changed(language: str) -> str:
 
 
 def _greeting(language: str) -> str:
-    if language == "hi": return "नमस्ते! मैं Entartica Sea World का virtual assistant हूँ। मैं Raipur की rides, celebration options और booking enquiries में मदद कर सकता हूँ।"
-    if language == "hinglish": return "Namaste! Main Entartica Sea World ka virtual assistant hoon. Main Raipur ki rides, celebration options aur booking enquiries mein madad kar sakta hoon."
-    return "Hello! I am Entartica Sea World's virtual assistant. I can help with Raipur rides, celebration options, and booking enquiries."
+    return greeting_response(language)
 def _is_availability_request(text: str) -> bool:
     return _is_live_availability_request(text)
 
@@ -915,11 +895,16 @@ def _with_service(context: ConversationContext, service: Any, intent: str) -> Co
 
 
 def _is_location_question(text: str) -> bool:
+    if is_location_question(text):
+        return True
     value = text.casefold()
     explicit_request = any(phrase in value for phrase in (
         "location bhejo", "address batao", "address bhejo", "map link",
         "google maps", "google maps link", "location send", "where is it",
         "where are you located", "how can i reach entartica", "venue location",
+        "send address", "send location", "venue address", "directions",
+        "pata", "pata batao", "kahan hai", "kaha hai", "address", "location",
+        "map", "google map", "à¤ªà¤¤à¤¾", "à¤•à¤¹à¤¾à¤ à¤¹à¥ˆ", "à¤²à¥‹à¤•à¥‡à¤¶à¤¨",
     ))
     scoped = "raipur" in value or "entartica" in value or "\u090f\u0902\u091f\u093e\u0930" in text or "\u0930\u093e\u092f\u092a\u0941\u0930" in text
     direct_location_words = ("kaha", "kahaan", "location", "address", "map", "स्थान", "कहाँ")
@@ -959,16 +944,10 @@ def _is_raipur_city_geography_question(text: str) -> bool:
     return bool(_RAIPUR_CITY_GEOGRAPHY.search(text) and not _ENTARTICA_SCOPE.search(text))
 
 
-def _is_service_list_question(text: str) -> bool:
-    return bool(_SERVICE_LIST_QUESTION.search(text)) and approved_service_from_message(text) is None and not _is_inclusion_question(text)
-
-
-def _is_inclusion_question(text: str) -> bool:
-    return bool(re.search(r"\b(?:included|include|inclusion|comes\s+with|isme)\b", text, re.I))
-
-
-def _is_celebration_list_question(text: str) -> bool:
-    return bool(_CELEBRATION_LIST_QUESTION.search(text)) and approved_service_from_message(text) is None
+def _is_package_list_question(text: str) -> bool:
+    # A generic “combo package” can match a package alias, but it is still a
+    # request for package options rather than an instruction to select one.
+    return is_package_category_request(text)
 
 
 def _is_service_detail_question(text: str) -> bool:
@@ -1002,6 +981,8 @@ def _normalize_intent_text(text: str) -> str:
     value = re.sub(r"\btell\s+em\b", "tell me", value)
     value = re.sub(r"\bcanbyou\b", "can you", value)
     value = re.sub(r"\babut\b", "about", value)
+    value = re.sub(r"\b(?:adress|addres|adderss)\b", "address", value)
+    value = re.sub(r"\b(?:locaton|locatioon)\b", "location", value)
     value = re.sub(r"\bkya\s+hain\b", "kya hai", value)
     value = re.sub(r"\bpregnent\b", "pregnant", value)
     value = re.sub(r"\bpregnency\b", "pregnancy", value)
@@ -1078,6 +1059,7 @@ def _participation_eligibility_fallback(question: str, language: str) -> str:
 
 
 def _structured_location_answer(location: dict[str, Any] | None, language: str) -> str | None:
+    return structured_location_answer(location, language)
     if not isinstance(location, dict):
         return None
     metadata = location.get("metadata") if isinstance(location.get("metadata"), dict) else {}
@@ -1177,7 +1159,7 @@ def _service_list_answer(services: list[dict[str, Any]], language: str) -> str:
         return f"Raipur mein {', '.join(names)} aur anya activities available hain. Aap kis activity ke baare mein details chahte hain?"
     if language == "hi":
         return f"रायपुर में {', '.join(names)} और अन्य गतिविधियाँ उपलब्ध हैं। आप किस गतिविधि की जानकारी चाहते हैं?"
-    return f"We offer these Raipur activities: {', '.join(names)}. Which activity would you like to know about?"
+    return service_list_answer(services, language)
 
 
 def _celebration_service_list_answer(services: list[dict[str, Any]], language: str) -> str:
@@ -1186,7 +1168,13 @@ def _celebration_service_list_answer(services: list[dict[str, Any]], language: s
         return f"Entartica Sea World, Raipur mein celebration options hain: {', '.join(names)}. Aap kis option ke baare mein details chahte hain?"
     if language == "hi":
         return f"Entartica Sea World, Raipur mein celebration options hain: {', '.join(names)}. Aap kis option ke baare mein jaanna chahte hain?"
-    return f"At Entartica Sea World, Raipur, the available celebration options include {', '.join(names)}. Which option would you like to know more about?"
+    return celebration_service_list_answer(services, language)
+
+def _package_service_list_answer(services: list[dict[str, Any]], language: str) -> str:
+    names = [row["name"].strip() for row in services if isinstance(row.get("name"), str) and row["name"].strip()]
+    if language == "hinglish":
+        return f"Raipur mein approved package options hain: {', '.join(names)}. Aap kis package ke baare mein details chahte hain? Current pricing aur availability team confirm karegi."
+    return package_service_list_answer(services, language)
 
 
 def _service_detail_fallback(name: str, language: str) -> str:
@@ -1229,10 +1217,10 @@ def _definition_follow_up(language: str) -> str:
 
 def _self_introduction(language: str) -> str:
     if language == "hinglish":
-        return "Main Entartica Sea World ka virtual assistant hoon. Main aapko Raipur activities, celebration experiences, location aur sales contact details ke baare mein help kar sakta hoon. Pricing, availability aur final booking confirmation Entartica sales team provide karegi."
+        return "Main Chiki hoon, Entartica Sea World se. Main aapko Raipur activities, celebration experiences, location aur sales contact details ke baare mein help kar sakta hoon. Pricing, availability aur final booking confirmation Entartica sales team provide karegi."
     if language == "hi":
-        return "मैं Entartica Sea World का virtual sales assistant हूँ। मैं Raipur की activities, celebration options, service details और booking enquiries में मदद करता हूँ। Current price, live availability और final booking confirmation टीम verify करती है।"
-    return "I'm Entartica Sea World's virtual assistant. I can help you with information about our Raipur activities, celebration experiences, location, and sales contact details. For pricing, availability, and final booking confirmation, the Entartica sales team will assist you."
+        return "मैं Chiki हूँ, Entartica Sea World से। मैं Raipur की activities, celebration options, service details और booking enquiries में मदद करता हूँ। Current price, live availability और final booking confirmation टीम verify करती है।"
+    return "I'm Chiki from Entartica Sea World. I can help you with information about our Raipur activities, celebration experiences, location, and sales contact details. For pricing, availability, and final booking confirmation, the Entartica sales team will assist you."
 
 
 def _current_information(language: str) -> str:

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -14,19 +16,54 @@ from app.rag import retrieval
 from app.schemas.exotel_webhook import NormalizedInboundMessage
 from app.services.booking_enquiries import BookingEnquiryService
 from app.services.raipur_conversation import KnowledgeDraft, RaipurConversationService
-from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
+from app.services.latency import LatencyTrace, configure_latency_logging, latency_counter, latency_openai_call, latency_stage, use_latency_trace
 
 
-def test_latency_summary_contains_only_safe_aggregate_fields(caplog) -> None:
+def test_latency_summary_contains_only_safe_aggregate_fields(tmp_path) -> None:
+    path = configure_latency_logging(tmp_path / "latency.jsonl")
     trace = LatencyTrace(request_id="safe-request-id")
     with use_latency_trace(trace), latency_stage("dialogue_planner"), latency_stage("answer_validation"):
         pass
-    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
-        trace.summary(intent="location", response_mode="grounded_answer", response_basis="deterministic")
-    message = caplog.messages[-1]
-    assert "latency_summary" in message and "planner_ms=" in message and "app_total_ms=" in message
+    trace.summary(intent="location", response_mode="grounded_answer", response_basis="deterministic", route="location", service_code="raipur_general", topic="address", answer_source="structured", cache_hit=False)
+    payload = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["event"] == "chatbot_latency_summary" and payload["trace_id"] == "safe-request-id"
+    for field in ("background_start_delay_ms", "customer_lock_wait_ms", "conversation_lookup_ms", "orchestrator_initialization_ms", "knowledge_retrieval_ms", "embedding_ms", "sales_composer_ms", "sales_agent_ms", "draft_approval_ms", "send_claim_ms", "exotel_http_ms", "total_ms"):
+        assert field in payload
+    message = path.read_text(encoding="utf-8")
     for private in ("+919000000000", "secret", "Authorization"):
         assert private not in message
+
+
+def test_dedicated_sink_correlates_stages_counts_calls_and_omits_customer_data(tmp_path) -> None:
+    path = configure_latency_logging(tmp_path / "latency.jsonl")
+    trace = LatencyTrace(request_id="trace-correlation")
+    with use_latency_trace(trace):
+        trace.event("webhook_received")
+        latency_counter("supabase_reads", 2)
+        latency_counter("supabase_writes")
+        with latency_openai_call("sales_response_composer", "test-model"):
+            pass
+        trace.summary(route="answer_service", service_code="party_boat_celebration", topic="overview")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows and {row["trace_id"] for row in rows} == {"trace-correlation"}
+    summary = rows[-1]
+    assert summary["logical_openai_calls"] == 1 and summary["embedding_calls"] == 0
+    assert summary["supabase_reads"] == 2 and summary["supabase_writes"] == 1 and summary["supabase_round_trips"] == 3
+    text = path.read_text(encoding="utf-8")
+    assert "birthday for 12 people" not in text and "+919000000000" not in text and "api-secret" not in text
+
+
+def test_missing_stages_are_zero_and_nested_stages_are_not_double_counted(tmp_path) -> None:
+    path = configure_latency_logging(tmp_path / "latency.jsonl")
+    trace = LatencyTrace(request_id="nested")
+    with use_latency_trace(trace), latency_stage("total_orchestration"):
+        with latency_stage("customer_understanding"):
+            time.sleep(0.005)
+    trace.summary(route="test")
+    payload = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["embedding_ms"] == 0 and payload["draft_approval_ms"] == 0
+    assert payload["accounted_ms"] <= payload["total_ms"]
+    assert 0 <= payload["unaccounted_ms"] < 50
 
 
 def test_embedding_http_client_is_reused_without_network(monkeypatch) -> None:

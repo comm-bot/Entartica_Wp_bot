@@ -8,7 +8,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 
-from app.services.raipur_conversation import KnowledgeDraft
+from app.services.raipur.response_models import KnowledgeDraft
 from app.services.raipur_langgraph import RaipurLangGraphWorkflow
 
 RESULTS = ROOT / "evals" / "results"

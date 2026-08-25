@@ -113,8 +113,9 @@ def _print_chunk_deduplication(filename: str, original_count: int, unique_count:
     print(f"duplicate_indexes={duplicate_indexes}")
 
 
-def ingest_document(client: Any, document: Any, settings: Settings, *, embedder=embed_texts) -> tuple[str, int]:
-    version = f"{document.checksum}:raipur_unified_v1"
+def ingest_document(client: Any, document: Any, settings: Settings, *, embedder=embed_texts, version_tag: str = "unified_v1") -> tuple[str, int]:
+    location_code = str(document.metadata.get("location_code", "raipur")).strip().casefold()
+    version = f"{document.checksum}:{location_code}_{version_tag}"
     existing = _at_stage(
         "fetch_existing_document",
         lambda: _rows(client.table("knowledge_documents").select("id,document_version,is_active").eq("source_file", document.source_file).execute()),
@@ -124,7 +125,7 @@ def ingest_document(client: Any, document: Any, settings: Settings, *, embedder=
     document_stage = "update_document" if existing else "insert_document"
     staged = _at_stage(
         document_stage,
-        lambda: _rows(client.table("knowledge_documents").upsert({"source_file": document.source_file, "document_version": version, "approved_by": "raipur_knowledge_manifest", "is_active": False, "metadata": document.metadata | {"ingestion_status": "staging"}}, on_conflict="source_file,document_version").execute()),
+        lambda: _rows(client.table("knowledge_documents").upsert({"source_file": document.source_file, "document_version": version, "approved_by": f"{location_code}_knowledge_ingestion", "is_active": False, "metadata": document.metadata | {"ingestion_status": "staging"}}, on_conflict="source_file,document_version").execute()),
     )
     if not staged or not isinstance(staged[0].get("id"), str):
         raise IngestionStageError(document_stage, RuntimeError("document_upsert_failed"))

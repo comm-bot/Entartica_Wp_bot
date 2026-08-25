@@ -6,7 +6,8 @@ import logging
 from typing import Any, Callable
 
 from app.services.raipur_draft_sender import ApprovedDraftSendResult
-from app.services.latency import latency_stage
+from starlette.concurrency import run_in_threadpool
+from app.services.latency import current_latency_trace, latency_stage
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -14,7 +15,7 @@ _INTENT_CATEGORIES = {
     "greeting": "information", "self_introduction": "information",
     "general": "information", "general_conversation": "information",
     "service_definition": "information",
-    "celebration_service_list": "services", "service_list": "services", "service_catalogue": "services",
+    "celebration_service_list": "services", "activity_service_list": "services", "service_list": "services", "service_catalogue": "services",
     "services": "services", "service_confirmation": "services",
     "service_offered": "services", "celebration_service_confirmation": "services",
     "celebration_service_detail": "information", "service_detail": "information",
@@ -27,6 +28,7 @@ _INTENT_CATEGORIES = {
     "generic_service_definition": "information", "service_correction": "information",
     "conversation_repair": "information",
     "human_contact_request": "information",
+    "contact_information": "information",
 }
 _SAFE_NON_RAG_BASES = {"deterministic", "self_introduction", "conversation_repair", "general_stable_knowledge", "conversational_fallback", "clarification"}
 _SENT_REASONS = {
@@ -93,10 +95,48 @@ def eligible_for_automatic_reply(settings: Any, orchestration: Any, draft: dict[
     text = getattr(orchestration, "draft_text", None)
     response_mode = final_response_mode(orchestration)
     prohibited = ("price", "payment", "booking confirmation", "reservation", "refund", "cancel", "complaint")
-    if response_mode is None: return False, "response_mode_unavailable"
-    if intent not in allowed: return False, "category_not_enabled"
-    if not isinstance(text, str) or not text.strip(): return False, "ineligible_content"
-    if raw_intent != "self_introduction" and response_mode not in {"human_handover", "direct_contact_details"} and any(word in text.casefold() for word in prohibited): return False, "ineligible_content"
+    approved_pontoon_package = bool(
+        isinstance(metadata, dict)
+        and metadata.get("approved_package") is True
+        and metadata.get("answer_source") == "pontoon_package_boundary"
+        and metadata.get("service_code") == "pontoon_celebration"
+    )
+    approved_coimbatore_master = bool(
+        isinstance(metadata, dict)
+        and metadata.get("approved_coimbatore_master") is True
+        and metadata.get("knowledge_location") == "coimbatore"
+        and metadata.get("service_code") == "pontoon_celebration"
+        and metadata.get("source_filename") == "COIMBATORE_KNOWLEDGE_BASE.md"
+        and metadata.get("authority") == "approved_current"
+        and metadata.get("structured_grounding") is True
+    )
+    approved_coimbatore_deterministic = bool(
+        isinstance(metadata, dict)
+        and metadata.get("active_location") == "coimbatore"
+        and metadata.get("active_service") == "pontoon_celebration"
+        and metadata.get("coimbatore_pontoon_mvp") is True
+        and metadata.get("answer_source") == "structured_grounding"
+        and metadata.get("response_basis") == "deterministic"
+        and metadata.get("structured_grounding") is True
+        and metadata.get("customer_response_sanitized") is True
+    )
+    approved_coimbatore_payment = bool(
+        isinstance(metadata, dict)
+        and metadata.get("approved_coimbatore_payment_response") is True
+        and metadata.get("package_id") == "coimbatore_pontoon_standard"
+        and metadata.get("payment_provider") == "razorpay"
+        and metadata.get("razorpay_mode") == "test"
+        and metadata.get("service_code") == "pontoon_celebration"
+        and metadata.get("response_basis") == "deterministic"
+        and metadata.get("structured_grounding") is True
+        and metadata.get("customer_response_sanitized") is True
+    )
+    if response_mode is None: return _rejected("response_mode_unavailable", "response_mode_missing", metadata, intent)
+    if intent not in allowed: return _rejected("category_not_enabled", "automatic_reply_category_disabled", metadata, intent)
+    if not isinstance(text, str) or not text.strip(): return _rejected("ineligible_content", "empty_draft_text", metadata, intent)
+    restricted_token = next((word for word in prohibited if word in text.casefold()), None)
+    if raw_intent != "self_introduction" and response_mode not in {"human_handover", "direct_contact_details"} and restricted_token and not (approved_pontoon_package or approved_coimbatore_master or approved_coimbatore_deterministic or approved_coimbatore_payment):
+        return _rejected("ineligible_content", f"restricted_commercial_token:{restricted_token}", metadata, intent)
     if not isinstance(metadata, dict) or metadata.get("customer_response_sanitized") is not True: return False, "ungrounded_response"
     basis = metadata.get("response_basis")
     has_source = isinstance(metadata.get("source_filename"), str) and bool(metadata["source_filename"].strip())
@@ -119,6 +159,16 @@ def eligible_for_automatic_reply(settings: Any, orchestration: Any, draft: dict[
     return True, "eligible"
 
 
+def _rejected(reason: str, rule: str, metadata: Any, category: str | None) -> tuple[bool, str]:
+    """Log a safe rule identifier without recording message text or customer data."""
+    location = metadata.get("active_location", "unknown") if isinstance(metadata, dict) else "unknown"
+    logger.info(
+        "automatic_reply_rejected reason=%s eligibility_rule=%s content_category=%s location=%s",
+        reason, rule, category or "unknown", location,
+    )
+    return False, reason
+
+
 async def attempt_automatic_reply(*, settings: Any, orchestration: Any, draft: dict[str, Any] | None,
                                   recipient: str, repository: Any, sender_factory: Callable[[], Any]) -> AutomaticReplyResult:
     with latency_stage("automatic_reply_eligibility"):
@@ -128,8 +178,13 @@ async def attempt_automatic_reply(*, settings: Any, orchestration: Any, draft: d
     draft_id = draft.get("id")
     try: sender = sender_factory()
     except Exception: return AutomaticReplyResult(False, reason="sender_configuration_unavailable")
-    if not isinstance(draft_id, str) or not repository.approve_draft(draft_id):
+    if not isinstance(draft_id, str):
         return AutomaticReplyResult(False, reason="approval_failed")
+    with latency_stage("draft_approval"):
+        approved = await run_in_threadpool(repository.approve_draft, draft_id)
+    if not approved:
+        return AutomaticReplyResult(False, reason="approval_failed")
+    if (trace := current_latency_trace()) is not None: trace.event("draft_approved")
     result: ApprovedDraftSendResult = await sender.send(draft_id, recipient, confirmed=True)
     response_sent = bool(getattr(result, "accepted", False) and getattr(result, "sid_recorded", False))
     reason = _SENT_REASONS[response_mode] if response_sent and response_mode in _SENT_REASONS else result.reason

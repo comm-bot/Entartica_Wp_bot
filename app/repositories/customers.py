@@ -3,6 +3,7 @@
 from typing import Any
 
 from supabase import Client
+from app.services.latency import latency_counter
 
 
 class CustomerRepository:
@@ -14,6 +15,7 @@ class CustomerRepository:
     def get_or_create(self, whatsapp_number: str, profile_name: str | None) -> dict[str, Any]:
         """Return an existing customer or create the first record for a number."""
 
+        latency_counter("supabase_reads")
         existing_response = (
             self._client.table("customers")
             .select("*")
@@ -27,6 +29,7 @@ class CustomerRepository:
         record: dict[str, Any] = {"whatsapp_number": whatsapp_number}
         if profile_name is not None:
             record["name"] = profile_name
+        latency_counter("supabase_writes")
         response = self._client.table("customers").insert(record).execute()
         return response.data[0]
 
@@ -41,6 +44,20 @@ class CustomerRepository:
             .execute()
         )
         return response.data if response is not None else None
+
+    def get_by_id(self, customer_id: str) -> dict[str, Any] | None:
+        response = (self._client.table("customers").select("*")
+                    .eq("id", customer_id).maybe_single().execute())
+        return response.data if response is not None else None
+
+    def update_details(self, customer_id: str, *, name: str, email: str) -> dict[str, Any] | None:
+        from datetime import UTC, datetime
+        response = (self._client.table("customers").update({
+            "name": name, "email": email,
+            "details_completed_at": datetime.now(UTC).isoformat(),
+        }).eq("id", customer_id).execute())
+        data = getattr(response, "data", None)
+        return data[0] if isinstance(data, list) and data else data if isinstance(data, dict) else None
 
     def list_by_ids(self, customer_ids: list[str]) -> list[dict[str, Any]]:
         """Return the minimal customer fields for a local, masked sales view."""

@@ -5,7 +5,7 @@ import pytest
 
 from app.schemas.exotel_webhook import NormalizedInboundMessage
 from app.services.booking_enquiries import BookingDetails
-from app.services.raipur_conversation import ConversationContext, KnowledgeDraft
+from app.services.raipur.response_models import ConversationContext, KnowledgeDraft
 import app.services.raipur_inbound_orchestrator as module
 
 

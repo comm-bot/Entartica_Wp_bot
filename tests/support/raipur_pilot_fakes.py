@@ -1,7 +1,7 @@
 """No-network dependencies for the real Raipur conversation pilot."""
 from datetime import UTC, datetime
 from app.services.availability import AvailabilityResult
-from app.services.raipur_conversation import KnowledgeDraft
+from app.services.raipur.response_models import KnowledgeDraft
 class Availability:
  def __init__(self,status="verification_required"):self.status=status;self.calls=0
  def check(self,_):self.calls+=1;return AvailabilityResult(self.status,datetime(2026,7,21,tzinfo=UTC))

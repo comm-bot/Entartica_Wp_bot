@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
+import json
 import logging
+import re
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 from app.repositories.booking_enquiries import BookingEnquiryRepository
@@ -12,15 +16,52 @@ from app.repositories.locations import LocationRepository
 from app.repositories.services import ServiceRepository
 from app.repositories.conversations import ConversationRepository
 from app.services.booking_enquiries import BookingEnquiryService
+from app.services.booking_enquiries import BookingDetails
 from app.services.raipur_availability_provider import build_raipur_availability_provider
-from app.services.raipur_conversation import KnowledgeDraft, RaipurConversationService, _language
+from app.services.raipur.response_models import ConversationContext, KnowledgeDraft
+from app.services.raipur.sales_state import SalesStage
+from app.services.raipur_conversation import RaipurConversationService
+from app.services.raipur.language import detect_language
 from app.services.raipur_services import approved_service_from_message
 from app.services.raipur_conversational_fallback import build_raipur_conversational_fallback
+from app.services.raipur.customer_understanding import build_customer_understanding_service
 from app.services.raipur_sales_contact import SalesContact
 from app.services.raipur_langgraph import RaipurLangGraphWorkflow
+from app.services.raipur.sales_response_composer import build_sales_response_composer
+from app.services.raipur.sales_agent import build_sales_agent
+from app.services.whatsapp_response_formatter import format_whatsapp_response
+from app.services.latency import current_latency_trace, latency_attribute, latency_counter, latency_stage
+from app.schemas.interactive_messages import celebration_selector, configured_flow, location_selector
+from app.schemas.template_messages import TemplateMessage
+from app.services.raipur.interactive_journey import merge_form_response, merge_natural_visit_details, qualification_reply, requested_location, requests_location_change
+from app.services.coimbatore.pontoon_qualification import is_enabled as coimbatore_pontoon_enabled, qualify as qualify_coimbatore_pontoon
 
 
 logger = logging.getLogger("uvicorn.error")
+_LOCATION_CACHE_TTL_SECONDS = 300
+_location_cache: dict[object, tuple[float, dict[str, Any] | None]] = {}
+_location_cache_lock = Lock()
+_RAIPUR_QUALIFICATION_MESSAGE = """Hello, this is Chiki from Entartica SeaWorld 😊
+
+Kindly share a few details so I can assist you better:
+
+• Which date are you planning for?
+• How many persons are going to attend?
+• Which location are you coming from?"""
+
+
+def _cached_raipur_location(client: Any) -> dict[str, Any] | None:
+    key, now = client, monotonic()
+    with _location_cache_lock:
+        cached = _location_cache.get(key)
+        if cached is not None and cached[0] > now:
+            latency_attribute("location_cache_hit", True)
+            return cached[1]
+    latency_attribute("location_cache_hit", False)
+    location = LocationRepository(client).get_location_by_code("raipur")
+    with _location_cache_lock:
+        _location_cache[key] = (now + _LOCATION_CACHE_TTL_SECONDS, location)
+    return location
 
 
 class _NoDrafts:
@@ -35,30 +76,51 @@ class _SafeKnowledge:
 
 class RaipurInboundOrchestrator:
     def __init__(self, client: Any, settings: Any, knowledge_provider: Any = None):
-        self._location = LocationRepository(client).get_location_by_code("raipur")
+        self._settings = settings
+        self._location = _cached_raipur_location(client)
         availability_provider = build_raipur_availability_provider(settings, client=client)
         services = ServiceRepository(client)
         bookings = BookingEnquiryService(
             BookingEnquiryRepository(client), availability_provider, services
         )
-        self._conversation = RaipurConversationService(
-            knowledge=knowledge_provider or _SafeKnowledge(),
-            bookings=bookings,
-            drafts=_NoDrafts(),
-            services=services,
-            location=self._location,
-            persist_drafts=False,
-            timezone_name=settings.app_timezone,
-            conversational_fallback=build_raipur_conversational_fallback(settings),
-            sales_contact=SalesContact.from_settings(settings),
-        )
         self._contexts = ConversationRepository(client)
         self._langgraph_enabled = bool(getattr(settings, "raipur_langgraph_enabled", False))
         self._router_revision = str(getattr(settings, "router_revision", "local"))
-        self._langgraph = RaipurLangGraphWorkflow(
-            self._conversation, knowledge=knowledge_provider or _SafeKnowledge(), services=services,
-            location=self._location, sales_contact=SalesContact.from_settings(settings),
-        ) if self._langgraph_enabled else None
+        knowledge = knowledge_provider or _SafeKnowledge()
+        fallback = build_raipur_conversational_fallback(settings)
+        customer_understanding = build_customer_understanding_service(settings)
+        sales_response_composer = build_sales_response_composer(settings)
+        sales_agent = build_sales_agent(settings)
+        sales_contact = SalesContact.from_settings(settings)
+        # The feature flag selects exactly one engine.  LangGraph receives its
+        # focused dependencies directly and never constructs the rollback
+        # service; false retains the single explicit compatibility path.
+        if self._langgraph_enabled:
+            self._conversation = None
+            self._langgraph = RaipurLangGraphWorkflow(
+                knowledge=knowledge,
+                services=services,
+                location=self._location,
+                sales_contact=sales_contact,
+                conversational_fallback=fallback,
+                customer_understanding=customer_understanding,
+                understanding_enabled=True,
+                sales_response_composer=sales_response_composer,
+                sales_agent=sales_agent,
+            )
+        else:
+            self._conversation = RaipurConversationService(
+                knowledge=knowledge,
+                bookings=bookings,
+                drafts=_NoDrafts(),
+                services=services,
+                location=self._location,
+                persist_drafts=False,
+                timezone_name=settings.app_timezone,
+                conversational_fallback=fallback,
+                sales_contact=sales_contact,
+            )
+            self._langgraph = None
         self._context_ttl_minutes = max(1, int(getattr(settings, "raipur_conversation_context_ttl_minutes", 120)))
         self._session_ttl_minutes = max(1, int(getattr(settings, "conversation_session_ttl_minutes", 30)))
 
@@ -77,12 +139,16 @@ class RaipurInboundOrchestrator:
         scoped["location_id"] = self._location["id"]
         customer_id, conversation_id = customer.get("id"), scoped.get("id")
         stored = None
-        if current_state is None and isinstance(customer_id, str) and isinstance(conversation_id, str):
+        # Context resolution is local repository work; keep it visible without
+        # changing its ordering or fail-closed behaviour.
+        with latency_stage("context_resolution"):
+          if current_state is None and isinstance(customer_id, str) and isinstance(conversation_id, str):
             try:
                 stored = self._contexts.get_service_context(conversation_id, customer_id)
             except Exception:
                 # A context read failure must never leak another conversation's state.
                 stored = None
+        if (trace := current_latency_trace()) is not None: trace.event("context_load_complete", duration_ms=trace.value("context_resolution"))
         state, expired = _context_from_record(
             current_state if current_state is not None else stored or scoped.get("service_context"),
             self._context_ttl_minutes,
@@ -90,13 +156,26 @@ class RaipurInboundOrchestrator:
         if current_state is None and _is_stale_greeting(stored, getattr(message, "content", ""), self._session_ttl_minutes):
             state, expired = None, True
         previous_service = state.last_service_name if state is not None else None
-        if self._langgraph is None:
+        content = getattr(message, "content", "")
+        coimbatore_path = coimbatore_pontoon_enabled(self._settings, state)
+        if coimbatore_path:
+            result = qualify_coimbatore_pontoon(
+                content, state or _empty_context(selected_location="coimbatore"),
+                timezone_name=getattr(self._settings, "app_timezone", "Asia/Kolkata"),
+            )
+        else:
+            result = (
+                _interactive_gate_result(message, state, settings=self._settings)
+                if bool(getattr(self._settings, "interactive_whatsapp_enabled", False)) else None
+            )
+        if result is not None:
+            pass
+        elif self._langgraph is None:
             result = self._conversation.process(
                 message, customer=customer, conversation=scoped,
                 source_message_id=source_message_id, current_state=state,
             )
         else:
-            content = getattr(message, "content", "")
             result = self._langgraph.invoke(
                 {
                     "message_id": source_message_id,
@@ -104,7 +183,7 @@ class RaipurInboundOrchestrator:
                     "customer_id": customer_id if isinstance(customer_id, str) else "",
                     "customer_message": content if isinstance(content, str) else "",
                     "normalized_message": content.casefold().strip() if isinstance(content, str) else "",
-                    "language": _language(content) if isinstance(content, str) else "en",
+                    "language": detect_language(content) if isinstance(content, str) else "en",
                     "location_code": "raipur", "previous_service_code": getattr(state, "last_service_code", None),
                     "previous_topic": getattr(state, "active_topic", None),
                     "intent": "unknown", "entity_type": "unknown", "service_code": None, "topic": None,
@@ -114,6 +193,15 @@ class RaipurInboundOrchestrator:
                 message=message, customer=customer, conversation=scoped,
                 source_message_id=source_message_id, current_state=state,
             )
+        if not coimbatore_path and result.context is not None and bool(getattr(self._settings, "interactive_whatsapp_enabled", False)):
+            result = replace(result, context=merge_natural_visit_details(result.context, content))
+            follow_up = qualification_reply(result.context)
+            if follow_up is not None and not _looks_like_customer_question(content):
+                result = replace(result, draft_text=follow_up, detected_intent="visit_qualification")
+        if not coimbatore_path and bool(getattr(self._settings, "interactive_whatsapp_enabled", False)):
+            result = _offer_celebration_selector(result)
+        if not coimbatore_path and bool(getattr(self._settings, "interactive_whatsapp_enabled", False)):
+            result = _offer_interactive_form(result, content, self._settings)
         explicit_match = approved_service_from_message(getattr(message, "content", "")) is not None
         context_used = bool(
             not explicit_match
@@ -134,17 +222,27 @@ class RaipurInboundOrchestrator:
             "automatic_reply_eligible": False,
             "automatic_reply_rejection_reason": "not_evaluated",
         })
-        result = replace(result, safe_metadata=metadata)
+        service_code = metadata.get("service_code") if isinstance(metadata.get("service_code"), str) else getattr(result.context, "last_service_code", None)
+        with latency_stage("response_formatting"):
+            formatted = format_whatsapp_response(
+                text=result.draft_text, intent=result.detected_intent,
+                response_mode=metadata.get("response_mode") if isinstance(metadata.get("response_mode"), str) else None,
+                service_code=service_code if isinstance(service_code, str) else None,
+                service_display_name=getattr(result.context, "last_service_name", None),
+                topic=metadata.get("topic") if isinstance(metadata.get("topic"), str) else None,
+                language=result.response_language, requires_handover=result.human_handover_required,
+            )
+        result = replace(result, draft_text=formatted, safe_metadata=metadata)
         logger.info(
             "raipur_path_selected router_revision=%s langgraph_enabled=%s active_engine=%s "
-            "message_id=%s normalized_message=%s selected_route=%s intent=%s service_code=%s topic=%s "
+            "message_id=%s message_character_count=%s selected_route=%s intent=%s service_code=%s topic=%s "
             "used_previous_service=%s answer_source=%s source_filename=%s automatic_reply_eligible=%s "
             "automatic_reply_rejection_reason=%s",
             self._router_revision,
             self._langgraph_enabled,
             metadata["active_engine"],
             source_message_id,
-            getattr(message, "content", "").casefold().strip() if isinstance(getattr(message, "content", None), str) else "",
+            len(getattr(message, "content", "")) if isinstance(getattr(message, "content", None), str) else 0,
             metadata.get("graph_answer_source", result.reason_code),
             result.detected_intent,
             metadata.get("service_code") if isinstance(metadata, dict) and "service_code" in metadata else getattr(result.context, "last_service_code", None) or "none",
@@ -155,13 +253,209 @@ class RaipurInboundOrchestrator:
             False,
             "not_evaluated",
         )
+        telemetry = metadata.get("conversation_telemetry")
+        if isinstance(telemetry, dict):
+            logger.info("raipur_conversation_telemetry event=%s", json.dumps(telemetry, separators=(",", ":"), sort_keys=True))
         if isinstance(customer_id, str) and isinstance(conversation_id, str) and result.context is not None:
             try:
-                self._contexts.save_service_context(conversation_id, customer_id, _context_to_record(result.context))
+                with latency_stage("context_save"):
+                    self._contexts.save_service_context(conversation_id, customer_id, _context_to_record(result.context))
+                if (trace := current_latency_trace()) is not None: trace.event("context_save_complete", duration_ms=trace.value("context_save"))
             except Exception:
                 # The reply remains safe, but the next message will ask for clarification.
                 pass
         return result
+
+
+def _empty_context(*, selected_location: str | None = None) -> ConversationContext:
+    return ConversationContext(
+        BookingDetails(None, None, None, None, None, None, None),
+        selected_location=selected_location,
+    )
+
+
+def _controlled_interactive_result(
+    text: str, *, context: ConversationContext, intent: str, metadata: dict[str, Any] | None = None,
+) -> Any:
+    from app.services.raipur.response_models import ConversationResult
+    return ConversationResult(
+        action="answer_information", draft_text=text, reason_code="interactive_journey",
+        detected_intent=intent, detected_location=context.selected_location or "unresolved",
+        response_language="en", human_handover_required=False, context=context,
+        safe_metadata={
+            "response_mode": "deterministic_interactive", "response_basis": "structured_grounding",
+            "structured_grounding": True, "customer_response_sanitized": True,
+            "answer_source": "interactive_journey", **(metadata or {}),
+        },
+    )
+
+
+def _interactive_gate_result(message: Any, state: ConversationContext | None, *, settings: Any) -> Any | None:
+    text = getattr(message, "content", "")
+    context = state or _empty_context()
+    if requests_location_change(text):
+        selector = location_selector()
+        reset = replace(context, selected_location=None, active_journey=None, active_form=None, form_status="not_started")
+        return _controlled_interactive_result(
+            selector.fallback_text, context=reset, intent="location",
+            metadata={"interactive_message": selector.as_metadata(), "interactive_message_type": "list", "location_selector_sent": True},
+        )
+
+    selected = requested_location(text)
+    if context.selected_location is None:
+        if selected is None:
+            selector = location_selector()
+            return _controlled_interactive_result(
+                selector.fallback_text, context=context, intent="location",
+                metadata={"interactive_message": selector.as_metadata(), "interactive_message_type": "list", "location_selector_sent": True},
+            )
+        context = replace(context, selected_location=selected)
+        if selected == "raipur":
+            context = replace(context, active_journey="visit_qualification")
+            return _controlled_interactive_result(
+                _RAIPUR_QUALIFICATION_MESSAGE,
+                context=context, intent="location", metadata={"location_selected": "raipur"},
+            )
+        return _controlled_interactive_result(
+            "Automated assistance for this location is being prepared. Raipur is currently available for complete assistance.",
+            context=context, intent="location", metadata={"location_selected": selected, "inactive_location": True},
+        )
+
+    if selected is not None and selected != context.selected_location:
+        context = replace(context, selected_location=selected, active_journey=None, active_form=None, form_status="not_started")
+        if selected != "raipur":
+            return _controlled_interactive_result(
+                "Automated assistance for this location is being prepared. Raipur is currently available for complete assistance.",
+                context=context, intent="location", metadata={"location_selected": selected, "inactive_location": True},
+            )
+        return _controlled_interactive_result(
+            _RAIPUR_QUALIFICATION_MESSAGE,
+            context=replace(context, active_journey="visit_qualification"), intent="location", metadata={"location_selected": "raipur"},
+        )
+
+    if context.selected_location != "raipur":
+        return _controlled_interactive_result(
+            "Automated assistance for this location is being prepared. Raipur is currently available for complete assistance.",
+            context=context, intent="location", metadata={"location_selected": context.selected_location, "inactive_location": True},
+        )
+
+    form_response = getattr(message, "form_response", None)
+    if getattr(message, "message_type", None) == "flow" and isinstance(form_response, dict):
+        if context.last_service_code == "pontoon_celebration" and context.active_form == "pontoon_celebration":
+            form_response = {**form_response, "flow_type": "pontoon_celebration"}
+        merged, errors = merge_form_response(context, form_response)
+        if errors:
+            if merged.active_form == "pontoon_celebration":
+                if "event_date" in errors and merged.details.total_guests is not None:
+                    correction = "That date is invalid or has already passed. Please share a future date for the celebration."
+                elif "number_of_persons" in errors and merged.details.preferred_date is not None:
+                    correction = "Please share a positive number of persons for the celebration."
+                else:
+                    correction = "Please share a valid future Event Date and a positive Number of Persons."
+                return _controlled_interactive_result(
+                    correction, context=merged, intent="booking",
+                    metadata={"flow_submitted": True, "flow_type": "pontoon_celebration", "flow_validation_errors": list(errors)},
+                )
+            return _controlled_interactive_result(
+                "I couldn't validate all submitted details. Please share the corrected details here.",
+                context=merged, intent="booking", metadata={"flow_submitted": True, "flow_validation_errors": list(errors)},
+            )
+        form_type = merged.active_form
+        if form_type == "pontoon_celebration":
+            planned = merged.details.preferred_date
+            guests = merged.details.total_guests
+            text = (
+                f"Great — I have {planned.strftime('%d %B')} for {guests} guests for your Pontoon Celebration 🎉\n"
+                "You can ask me anything about the package, inclusions or arrangements."
+            )
+            return _controlled_interactive_result(
+                text, context=merged, intent="booking",
+                metadata={"flow_submitted": True, "flow_type": form_type, "pontoon_qualification_complete": True},
+            )
+        text = (
+            "Thanks 😊 I have your visit details. I can now help you explore the most relevant Raipur experiences."
+            if form_type == "general_quote"
+            else "Thanks 😊 I have your celebration details. Our team will confirm availability, price and final booking details with you."
+        )
+        return _controlled_interactive_result(
+            text, context=merged, intent="booking",
+            metadata={"flow_submitted": True, "flow_type": form_type},
+        )
+    return None
+
+
+def _looks_like_customer_question(text: object) -> bool:
+    if not isinstance(text, str):
+        return False
+    lowered = text.casefold()
+    return "?" in text or bool(re.search(r"\b(?:what|which|where|when|how|do you|is there|kya|kaun|kab|activities|activity)\b", lowered))
+
+
+def _offer_celebration_selector(result: Any) -> Any:
+    """Attach one list to broad discovery; service-specific routes remain untouched."""
+    if result is None or result.context is None or result.context.selected_location != "raipur":
+        return result
+    if result.detected_intent != "celebration_service_list" or result.context.last_service_code:
+        return result
+    interactive = celebration_selector(result.draft_text)
+    metadata = dict(result.safe_metadata or {})
+    metadata.update({
+        "interactive_message": interactive.as_metadata(),
+        "interactive_message_type": "list",
+        "celebration_selector_sent": True,
+    })
+    return replace(result, safe_metadata=metadata)
+
+
+def _offer_interactive_form(result: Any, text: object, settings: Any) -> Any:
+    if result is None or result.context is None or result.context.selected_location != "raipur" or not isinstance(text, str):
+        return result
+    if result.safe_metadata and result.safe_metadata.get("flow_submitted"):
+        return result
+    metadata = dict(result.safe_metadata or {})
+    if result.context.last_service_code == "pontoon_celebration" and metadata.get("pontoon_media_attached") is True:
+        flow_id = getattr(settings, "raipur_pontoon_celebration_flow_id", None)
+        template_id = getattr(settings, "raipur_pontoon_celebration_template_id", None)
+        media = metadata.get("media_message") if isinstance(metadata.get("media_message"), dict) else None
+        image_url = media.get("url") if isinstance(media, dict) else None
+        package_source = metadata.get("package_source_file")
+        if all(isinstance(value, str) and value.strip() for value in (flow_id, template_id, image_url, package_source)):
+            template = TemplateMessage(
+                name=template_id.strip(), language="en", header_image_url=image_url.strip(),
+                flow_id=flow_id.strip(), flow_cta="Share Event Details",
+                service_code="pontoon_celebration", package_source_file=package_source.strip(),
+            )
+            context = replace(
+                result.context, active_journey="celebration", active_form="pontoon_celebration", form_status="in_progress",
+            )
+            metadata.pop("media_message", None)
+            metadata.pop("interactive_message", None)
+            metadata.update({
+                "template_message": template.as_metadata(), "template_message_type": "template",
+                "combined_template_offered": True, "flow_offered": True, "flow_type": "pontoon_celebration",
+            })
+            return replace(result, context=context, safe_metadata=metadata)
+        return result
+    lowered = text.casefold()
+    celebration_booking = bool(
+        re.search(r"\b(?:book|booking|reserve)\b", lowered)
+        and re.search(r"\b(?:birthday|anniversary|celebration|proposal|party|gazebo|pontoon|houseboat)\b", lowered)
+    )
+    general_planning = bool(re.search(r"\b(?:plan\s+(?:my|a|our)?\s*visit|best\s+quote|quote\s+details|package\s+(?:selection|book))\b", lowered))
+    if not (celebration_booking or general_planning):
+        return result
+    flow_type = "celebration" if celebration_booking else "general_quote"
+    flow_id = getattr(settings, "raipur_celebration_flow_id" if celebration_booking else "raipur_general_quote_flow_id", None)
+    interactive = configured_flow(flow_type=flow_type, flow_id=flow_id)
+    context = replace(result.context, active_journey="celebration" if celebration_booking else "visit_quote",
+                      active_form=flow_type, form_status="in_progress")
+    metadata = dict(result.safe_metadata or {})
+    if interactive.kind == "flow":
+        metadata.update({"interactive_message": interactive.as_metadata(), "interactive_message_type": "flow",
+                         "flow_offered": True, "flow_type": flow_type})
+    else:
+        metadata.update({"interactive_fallback_used": True, "flow_offered": False, "flow_type": flow_type})
+    return replace(result, draft_text=interactive.fallback_text, context=context, safe_metadata=metadata)
 
 
 def _context_from_record(value: Any, ttl_minutes: int) -> tuple[Any, bool]:
@@ -185,11 +479,11 @@ def _context_from_record(value: Any, ttl_minutes: int) -> tuple[Any, bool]:
     service_name = value.get("service_name", value.get("last_matched_service_name"))
     service_code = value.get("service_code", value.get("last_matched_service_code"))
     has_service = isinstance(service_name, str) and service_name.strip() and isinstance(service_code, str) and service_code.strip()
+    selected_location = _optional_text(value.get("selected_location") or value.get("location_code"))
     has_topic = isinstance(value.get("active_domain"), str) or bool(value.get("pending_clarification"))
-    if not has_service and not has_topic:
+    if not has_service and not has_topic and selected_location is None:
         return None, False
     from app.services.booking_enquiries import BookingDetails
-    from app.services.raipur_conversation import ConversationContext
     details_record = value.get("booking_details") if isinstance(value.get("booking_details"), dict) else {}
     requested_service_text = _optional_text(details_record.get("requested_service_text"))
     if requested_service_text is None and has_service:
@@ -235,6 +529,12 @@ def _context_from_record(value: Any, ttl_minutes: int) -> tuple[Any, bool]:
         pending_slots=value.get("pending_slots") if isinstance(value.get("pending_slots"), dict) else None,
         last_answer_source=_optional_text(value.get("last_answer_source")),
         last_answer_sections=tuple(item for item in value.get("last_answer_sections", ()) if isinstance(item, str) and item.strip()) if isinstance(value.get("last_answer_sections", ()), (list, tuple)) else (),
+        sales_stage=_sales_stage(value.get("sales_stage")),
+        selected_location=selected_location,
+        active_journey=_optional_text(value.get("active_journey")),
+        active_form=_optional_text(value.get("active_form")),
+        form_status=_optional_text(value.get("form_status")) or "not_started",
+        form_values=value.get("form_values") if isinstance(value.get("form_values"), dict) else None,
     ), False
 
 
@@ -243,12 +543,18 @@ def _context_to_record(context: Any) -> dict[str, Any]:
 
     details = context.details
     return {
-        "location_code": "raipur",
+        "location_code": context.selected_location,
+        "selected_location": context.selected_location,
+        "active_journey": context.active_journey,
+        "active_form": context.active_form,
+        "form_status": context.form_status,
+        "form_values": context.form_values,
         "service_code": context.last_service_code,
         "previous_service_code": context.last_service_code,
         "previous_topic": context.active_topic,
         "last_answer_source": context.last_answer_source,
         "last_answer_sections": list(context.last_answer_sections),
+        "sales_stage": context.sales_stage.value,
         "service_name": context.last_service_name,
         "last_intent": context.last_intent,
         "last_bot_action": context.last_bot_action,
@@ -292,6 +598,13 @@ def _context_to_record(context: Any) -> dict[str, Any]:
 
 def _optional_text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _sales_stage(value: Any) -> SalesStage:
+    try:
+        return SalesStage(value)
+    except (TypeError, ValueError):
+        return SalesStage.DISCOVERY
 
 
 def _optional_nonnegative_int(value: Any) -> int | None:

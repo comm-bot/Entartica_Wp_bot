@@ -15,6 +15,19 @@ class C:
  def table(self,name):
   if self.fail:raise RuntimeError('private db url')
   return Q(self.docs if name=='knowledge_documents' else self.chunks)
+
+def test_vector_corpus_is_loaded_once_per_process_cache_generation():
+ class CountingClient(C):
+  def __init__(self,docs,chunks):super().__init__(docs,chunks);self.calls=[]
+  def table(self,name):self.calls.append(name);return super().table(name)
+ docs=[{'id':'r','source_file':'r.md','metadata':{'location_code':'raipur','approval_status':'approved'}}]
+ chunks=[{'knowledge_document_id':'r','content':'grounded','embedding':[1,0],'metadata':{}}]
+ client=CountingClient(docs,chunks)
+ from app.rag.retrieval import clear_retrieval_corpus_cache
+ clear_retrieval_corpus_cache()
+ assert retrieve_candidates(client,[1,0]) and retrieve_candidates(client,[0,1])
+ assert client.calls==['knowledge_documents','knowledge_chunks']
+ clear_retrieval_corpus_cache()
 def test_embed_query_validates_results():
  calls=[]
  assert embed_query('question',object(),embed_texts_fn=lambda q,s:calls.append(q) or [[1,2]])==[1.0,2.0]

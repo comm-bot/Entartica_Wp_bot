@@ -109,9 +109,9 @@ def test_cleaned_celebration_services_are_manifest_eligible_and_safe():
         assert document.metadata["approval_status"] == "approved"
         assert document.metadata["customer_facing"] is True and document.metadata["catalogue_status"] == "active"
         text = document.text.casefold()
-        assert all(section in text for section in ("## definition", "## confirmation required from entartica", "## frequently asked questions"))
-        assert "pricing" in text and "confirm" in text
-        assert "availability" in text and "confirm" in text
+        assert all(section in text for section in ("## experience overview", "## duration", "## operating hours", "## pricing", "## availability"))
+        assert "pricing" in text and "requires confirmation" in text
+        assert "availability" in text and "require verification" in text
         assert "booking is confirmed" not in text
         assert "payment is confirmed" not in text
 
@@ -128,11 +128,10 @@ def test_daycation_document_is_manifest_eligible_and_contains_only_safe_confirma
     assert document.metadata["approval_status"] == "approved"
     assert document.metadata["customer_facing"] is True and document.metadata["catalogue_status"] == "active"
     text = document.text.casefold()
-    assert all(section in text for section in ("## definition", "## what is typically included", "## confirmation required from entartica", "## frequently asked questions"))
-    assert "full-day experience" in text and "day-use" in text
-    assert "current pricing must be confirmed" in text
-    assert "availability" in text and "confirm" in text
-    assert "final confirmation is provided by the entartica team" in text
+    assert all(section in text for section in ("## experience overview", "## package inclusions", "## duration", "## operating hours", "## pricing", "## availability"))
+    assert "2:00 pm to 6:00 pm" in text
+    assert "pricing" in text and "requires confirmation" in text
+    assert "availability" in text and "require verification" in text
     assert "payment is confirmed" not in text
 
 
@@ -147,9 +146,10 @@ def test_party_boat_remains_eligible_and_internal_and_archive_paths_are_excluded
     assert party.metadata["approval_status"] == "approved"
     assert party.metadata["customer_facing"] is True and party.metadata["catalogue_status"] == "active"
     text = party.text.casefold()
-    assert all(section in text for section in ("## definition", "## confirmation required from entartica", "## frequently asked questions"))
-    assert "current pricing must be confirmed" in text
-    assert "current date and slot availability must be verified" in text
-    assert "an enquiry is not a confirmed booking" in text
+    assert all(section in text for section in ("## experience overview", "## duration", "## operating hours", "## pricing", "## availability"))
+    assert "pricing" in text and "requires confirmation" in text
+    assert "availability" in text and "require verification" in text
+    assert "10:00 am to 9:00 pm" in text
+    assert "2 hours" in text
     assert "payment is confirmed" not in text
     assert not any(path.startswith(("archive/", "internal/", "ingestion/")) for path in paths)

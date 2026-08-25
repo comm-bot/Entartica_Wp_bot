@@ -106,6 +106,77 @@ def test_unsanitized_draft_remains_ineligible():
     assert eligible_for_automatic_reply(settings(), orchestration(detected_intent="greeting", reason_code="greeting", safe_metadata={"structured_grounding": True}), draft())[0] is False
 
 
+def test_only_explicitly_approved_pontoon_package_bypasses_commercial_word_scan():
+    text = "Offer price. Pay token. Full Refund terms."
+    approved = orchestration(
+        detected_intent="service_overview", draft_text=text,
+        safe_metadata={
+            "response_basis": "active_rag", "customer_response_sanitized": True,
+            "answer_source": "pontoon_package_boundary", "service_code": "pontoon_celebration",
+            "approved_package": True, "source_filename": "approved-pontoon-config",
+        },
+    )
+    assert eligible_for_automatic_reply(settings(), approved, draft()) == (True, "eligible")
+
+    for changed in (
+        {"approved_package": False},
+        {"service_code": "party_boat_celebration"},
+        {"answer_source": "generated_answer"},
+    ):
+        metadata = {**approved.safe_metadata, **changed}
+        assert eligible_for_automatic_reply(settings(), orchestration(draft_text=text, safe_metadata=metadata), draft()) == (False, "ineligible_content")
+
+
+def test_superseded_coimbatore_standard_package_no_longer_gets_commercial_exception():
+    text = "Rack price ₹5,999. Token payment ₹1,000. Full refund terms."
+    metadata = {
+        "response_basis": "deterministic", "customer_response_sanitized": True,
+        "structured_grounding": True, "approved_standard_package": True,
+        "package_id": "coimbatore_pontoon_standard", "selected_location": "coimbatore",
+        "service_code": "pontoon_celebration",
+    }
+    approved = orchestration(draft_text=text, safe_metadata=metadata)
+    assert eligible_for_automatic_reply(settings(), approved, draft()) == (False, "ineligible_content")
+    for changed in (
+        {"approved_standard_package": False}, {"package_id": "other"},
+        {"selected_location": "raipur"}, {"service_code": "other"},
+    ):
+        rejected = orchestration(draft_text=text, safe_metadata={**metadata, **changed})
+        assert eligible_for_automatic_reply(settings(), rejected, draft()) == (False, "ineligible_content")
+
+
+def test_only_trusted_coimbatore_deterministic_reply_bypasses_legacy_commercial_scan():
+    metadata = {
+        "active_location": "coimbatore", "active_service": "pontoon_celebration",
+        "coimbatore_pontoon_mvp": True, "answer_source": "structured_grounding",
+        "response_basis": "deterministic", "structured_grounding": True,
+        "customer_response_sanitized": True,
+    }
+    result = orchestration(detected_intent="greeting", draft_text="Ask about price or booking.", safe_metadata=metadata)
+    assert eligible_for_automatic_reply(settings(), result, draft()) == (True, "eligible")
+    for changed in ({"active_location": "raipur"}, {"structured_grounding": False}, {"answer_source": "generated"}):
+        rejected = orchestration(detected_intent="greeting", draft_text="Ask about price or booking.", safe_metadata={**metadata, **changed})
+        assert eligible_for_automatic_reply(settings(), rejected, draft()) == (False, "ineligible_content")
+
+
+def test_only_approved_test_mode_razorpay_response_bypasses_payment_word_scan():
+    metadata = {
+        "approved_coimbatore_payment_response":True,
+        "package_id":"coimbatore_pontoon_standard", "payment_provider":"razorpay",
+        "razorpay_mode":"test", "service_code":"pontoon_celebration",
+        "response_basis":"deterministic", "structured_grounding":True,
+        "customer_response_sanitized":True,
+    }
+    result = orchestration(detected_intent="booking", draft_text="Secure test payment link is ready.",
+                           safe_metadata=metadata)
+    assert eligible_for_automatic_reply(settings(), result, draft()) == (True, "eligible")
+    for changed in ({"razorpay_mode":"live"}, {"payment_provider":"other"},
+                    {"package_id":"other"}, {"structured_grounding":False}):
+        rejected = orchestration(detected_intent="booking", draft_text="Secure payment link is ready.",
+                                 safe_metadata={**metadata, **changed})
+        assert eligible_for_automatic_reply(settings(), rejected, draft()) == (False, "ineligible_content")
+
+
 def test_response_basis_validation_allows_safe_greeting_but_fails_closed_otherwise():
     greeting = orchestration(detected_intent="greeting", reason_code="greeting", safe_metadata={"response_basis":"deterministic", "customer_response_sanitized":True})
     assert eligible_for_automatic_reply(settings(), greeting, draft()) == (True, "eligible")

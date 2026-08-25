@@ -196,26 +196,42 @@ class FakeOutboundDraftRepository:
 
     def _record(self, request: DraftCreateRequest) -> dict[str, Any]:
         self._sequence += 1
+        metadata = {
+            "language": request.language,
+            "action": request.action,
+            "template_key": request.template_key,
+            "human_handover_required": request.human_handover_required,
+            "response_valid": request.response_valid,
+        }
+        if request.interactive_message is not None:
+            metadata["interactive_message"] = request.interactive_message
+        if request.media_message is not None:
+            metadata["media_message"] = request.media_message
+        if request.template_message is not None:
+            metadata["template_message"] = request.template_message
+        if request.package_metadata is not None:
+            metadata.update(request.package_metadata)
         return {
             "id": f"fake-draft-{self._sequence}",
             "customer_id": request.customer_id,
             "conversation_id": request.conversation_id,
             "related_inbound_message_id": request.related_inbound_message_id,
             "direction": "outbound",
-            "message_type": "text",
+            "message_type": (
+                "template" if request.template_message
+                else "document" if (request.package_metadata or {}).get("document_message")
+                else "interactive" if request.interactive_message and request.interactive_message.get("header_image_url")
+                else "image" if request.media_message
+                else "interactive" if request.interactive_message
+                else "text"
+            ),
             "content": request.content,
             "delivery_status": None,
             "draft_status": "pending_review",
             "send_attempt_state": "none",
             "generated_by": "raipur_draft_orchestrator",
             "created_sequence": self._sequence,
-            "draft_metadata": {
-                "language": request.language,
-                "action": request.action,
-                "template_key": request.template_key,
-                "human_handover_required": request.human_handover_required,
-                "response_valid": request.response_valid,
-            },
+            "draft_metadata": metadata,
         }
 
     def _transition(
