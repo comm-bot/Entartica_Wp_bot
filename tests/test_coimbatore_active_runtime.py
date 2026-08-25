@@ -104,6 +104,32 @@ def test_combined_guest_and_date_accept_common_customer_separators(message):
     assert "₹6,375" in result.draft_text
 
 
+def test_exact_guest_and_short_month_date_presents_package():
+    service, _contexts = orchestrator()
+    result = run(service, "2 guest and 26 aug")
+    assert result.context.details.total_guests == 2
+    assert result.context.details.preferred_date == date(2026, 8, 26)
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "₹5,999" in result.draft_text
+    assert "₹5,100" in result.draft_text
+
+
+def test_unknown_second_step_sends_default_standard_package():
+    service, _contexts = orchestrator()
+    welcome = run(service, "Hi")
+    assert welcome.draft_text == FIRST_MESSAGE
+    result = run(service, "not sure what to write")
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert result.safe_metadata["default_package_fallback"] is True
+    assert result.safe_metadata["default_pricing_slab"] == "up_to_6"
+    assert result.context.details.total_guests is None
+    assert result.context.details.preferred_date is None
+    assert "Guests:" not in result.draft_text
+    assert "Event Date:" not in result.draft_text
+    assert "₹5,999" in result.draft_text
+    assert "₹5,100" in result.draft_text
+
+
 @pytest.mark.parametrize(
     "message",
     ["7 people, date is not decided", "7 guests and we are not sure about the date", "7 people, no date yet"],

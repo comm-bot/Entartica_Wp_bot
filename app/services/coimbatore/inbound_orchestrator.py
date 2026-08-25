@@ -309,7 +309,14 @@ class CoimbatoreInboundOrchestrator:
             return self._finalize(_package_choice_result(active), customer_id, conversation_id, fresh, source_message_id)
         llm_result = self._process_llm_turn(str(content), active, fresh=fresh, source_message_id=source_message_id)
         if llm_result is not None:
-            result = llm_result
+            result = (
+                self._default_standard_package_result(active)
+                if llm_result.detected_intent == "unknown"
+                and active.sales_stage == SalesStage.LEAD
+                and active.details.preferred_date is None
+                and active.details.total_guests is None
+                else llm_result
+            )
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         selected_action = action_id(content)
         explicit_package_request = is_package_request(content)
@@ -406,6 +413,19 @@ class CoimbatoreInboundOrchestrator:
                 draft_text=fallback_text,
                 context=replace(result.context, form_values=values, sales_stage=SalesStage.QUALIFIED if correction else active.sales_stage if active.sales_stage == SalesStage.PACKAGE_PRESENTED else SalesStage.QUALIFIED),
             )
+        if (
+            not fresh
+            and knowledge_answer is None
+            and selected_action is None
+            and requested_package is None
+            and active.sales_stage == SalesStage.LEAD
+            and active.details.preferred_date is None
+            and active.details.total_guests is None
+            and not _is_greeting(content)
+            and not has_qualification_update(content, active)
+            and result.reason_code == "coimbatore_pontoon_qualification"
+        ):
+            result = self._default_standard_package_result(active)
         if _is_greeting(content) and not fresh:
             if result.context.details.total_guests is not None and result.context.details.preferred_date is None:
                 greeting = "Hi 😊 Which date are you planning your Pontoon Celebration for?"
@@ -729,6 +749,7 @@ class CoimbatoreInboundOrchestrator:
             body = render_package(
                 package, context.details.preferred_date, context.details.total_guests,
                 None,
+                default_standard_pricing=bool(values.get("use_default_standard_pricing")),
             )
         if context.details.total_guests is None:
             next_prompt = "How many guests will be joining?"
@@ -786,6 +807,31 @@ class CoimbatoreInboundOrchestrator:
             detected_intent="package_details", detected_location="coimbatore", response_language="en",
             human_handover_required=False, context=context, safe_metadata=metadata,
         )
+
+    def _default_standard_package_result(self, context: ConversationContext) -> ConversationResult:
+        """Present approved entry-slab details without inventing missing facts."""
+        values = dict(context.form_values or {})
+        values.update({
+            "active_package_id": STANDARD_PACKAGE_ID,
+            "use_default_standard_pricing": True,
+        })
+        fallback_context = replace(
+            context,
+            form_values=values,
+            pending_field=None,
+            selected_location="coimbatore",
+            last_service_code="pontoon_celebration",
+            last_service_name="Pontoon Boat Celebration",
+            active_journey="pontoon_qualification",
+        )
+        fallback = self._package_result(fallback_context, STANDARD_PACKAGE_ID)
+        metadata = dict(fallback.safe_metadata or {})
+        metadata.update({
+            "default_package_fallback": True,
+            "default_pricing_slab": "up_to_6",
+            "understanding_mode": "deterministic_fallback",
+        })
+        return replace(fallback, safe_metadata=metadata)
 
     def confirm_standard_package_presented(self, result: ConversationResult, customer_id: str, conversation_id: str) -> bool:
         """Commit presentation state only after the outbound sequence is accepted."""

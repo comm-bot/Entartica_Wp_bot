@@ -184,6 +184,8 @@ def render_package(
     event_date: date | None,
     guests: int | None,
     preferred_time: time | None = None,
+    *,
+    default_standard_pricing: bool = False,
 ) -> str:
     body = package.message_template
     date_line = f"📅 Event Date: {event_date.strftime('%d %b %Y')}" if event_date is not None else ""
@@ -192,6 +194,8 @@ def render_package(
     body = body.replace("📅 Event Date: {{event_date}}", date_line).replace("👥 Guests: {{guest_count}}", guest_line)
     if package.package_id == STANDARD_PACKAGE_ID:
         pricing = resolve_standard_package_pricing(guests)
+        if pricing is None and default_standard_pricing:
+            pricing = resolve_standard_package_pricing(1)
         regular = f"{pricing.regular_price:,}" if pricing is not None else ""
         offer = f"{pricing.offer_price:,}" if pricing is not None else ""
         body = body.replace("{{regular_price}}", regular).replace("{{offer_price}}", offer)
