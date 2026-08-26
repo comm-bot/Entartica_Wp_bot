@@ -291,12 +291,19 @@ def package_request_id(text: object) -> str | None:
         return STANDARD_PACKAGE_ID
     if re.search(
         r"\b(?:"
-        r"i\s+(?:want|would\s+like)\s+to\s+(?:know\s+about\s+(?:the\s+)?package|celebrate)|"
-        r"(?:tell|show|send|give)\s+(?:me\s+)?(?:about\s+)?(?:the\s+)?package|"
         r"(?:pontoon\s+)?celebration\s+package|"
         r"(?:planning|plan)\s+(?:a\s+)?celebration|"
-        r"package\s+(?:information|info|offer)|"
-        r"celebration\s+details"
+        r"celebration\s+details|"
+        r"i\s+(?:want|would\s+like)\s+to\s+celebrate(?:\s+(?:a\s+)?[a-z]+)?"
+        r")\b",
+        normalized,
+    ):
+        return "default_standard"
+    if re.search(
+        r"\b(?:"
+        r"i\s+(?:want|would\s+like)\s+to\s+know\s+about\s+(?:the\s+)?package|"
+        r"(?:tell|show|send|give)\s+(?:me\s+)?(?:about\s+)?(?:the\s+)?package|"
+        r"package\s+(?:information|info|offer)"
         r")\b",
         normalized,
     ):

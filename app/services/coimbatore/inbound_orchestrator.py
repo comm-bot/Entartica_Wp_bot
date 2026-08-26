@@ -235,21 +235,10 @@ class CoimbatoreInboundOrchestrator:
         if selected_action and package_qualification_ready(active):
             result = self._handle_package_action(selected_action, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
-        if active.sales_stage == SalesStage.INTERESTED:
-            result = _collect_booking_details(content, active)
-            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         requested_package = package_request_id(content)
-        if (
-            fresh
-            and (active.details.preferred_date is None or active.details.total_guests is None)
-            and not has_qualification_update(content, active)
-        ):
-            values = dict(active.form_values or {})
-            values["active_package_id"] = COUPLE_PACKAGE_ID if requested_package == COUPLE_PACKAGE_ID else STANDARD_PACKAGE_ID
-            welcome_context = replace(active, form_values=values)
-            welcome = qualify("", welcome_context, timezone_name=getattr(self._settings, "app_timezone", "Asia/Kolkata"))
-            welcome = replace(welcome, context=replace(welcome.context, pending_field="total_guests"))
-            return self._finalize(welcome, customer_id, conversation_id, fresh, source_message_id)
+        if requested_package == "default_standard":
+            result = self._default_standard_package_result(active)
+            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         if requested_package is not None:
             package_context = replace(
                 active, selected_location="coimbatore", last_service_code="pontoon_celebration",
@@ -266,6 +255,20 @@ class CoimbatoreInboundOrchestrator:
             package_context = replace(package_context, form_values=values)
             result = self._package_result(package_context, requested_package)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        if active.sales_stage == SalesStage.INTERESTED:
+            result = _collect_booking_details(content, active)
+            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        if (
+            fresh
+            and (active.details.preferred_date is None or active.details.total_guests is None)
+            and not has_qualification_update(content, active)
+        ):
+            values = dict(active.form_values or {})
+            values["active_package_id"] = COUPLE_PACKAGE_ID if requested_package == COUPLE_PACKAGE_ID else STANDARD_PACKAGE_ID
+            welcome_context = replace(active, form_values=values)
+            welcome = qualify("", welcome_context, timezone_name=getattr(self._settings, "app_timezone", "Asia/Kolkata"))
+            welcome = replace(welcome, context=replace(welcome.context, pending_field="total_guests"))
+            return self._finalize(welcome, customer_id, conversation_id, fresh, source_message_id)
         if has_qualification_update(content, active):
             logger.info(
                 "qualification_before date_known=%s guest_known=%s pending_field=%s",
@@ -816,6 +819,7 @@ class CoimbatoreInboundOrchestrator:
 
     def _default_standard_package_result(self, context: ConversationContext) -> ConversationResult:
         """Present approved entry-slab details without inventing missing facts."""
+        saved_details = context.details
         values = dict(context.form_values or {})
         values.update({
             "active_package_id": STANDARD_PACKAGE_ID,
@@ -823,6 +827,7 @@ class CoimbatoreInboundOrchestrator:
         })
         fallback_context = replace(
             context,
+            details=replace(context.details, preferred_date=None, preferred_time=None, total_guests=None),
             form_values=values,
             pending_field=None,
             selected_location="coimbatore",
@@ -837,7 +842,11 @@ class CoimbatoreInboundOrchestrator:
             "default_pricing_slab": "up_to_6",
             "understanding_mode": "deterministic_fallback",
         })
-        return replace(fallback, safe_metadata=metadata)
+        return replace(
+            fallback,
+            context=replace(fallback.context, details=saved_details),
+            safe_metadata=metadata,
+        )
 
     def confirm_standard_package_presented(self, result: ConversationResult, customer_id: str, conversation_id: str) -> bool:
         """Commit presentation state only after the outbound sequence is accepted."""

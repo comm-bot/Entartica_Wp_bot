@@ -176,9 +176,6 @@ def test_existing_state_survives_and_corrections_preserve_other_field():
     "message",
     [
         "I want to know about the package",
-        "I want to celebrate",
-        "celebration package",
-        "planning a celebration",
         "package information",
     ],
 )
@@ -197,6 +194,36 @@ def test_returning_customer_package_phrases_resend_saved_appropriate_package(mes
     assert "Guests: 7" in result.draft_text
     assert "₹7,500" in result.draft_text
     assert "₹6,375" in result.draft_text
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I want to celebrate",
+        "celebration package",
+        "planning a celebration",
+        "i want to celebrate birthday",
+    ],
+)
+def test_returning_interested_customer_celebration_intent_gets_default_package_with_actions(message):
+    service, contexts = orchestrator()
+    offered = run(service, "20 people and 5 september")
+    record = contexts.record
+    record["sales_stage"] = "interested"
+    record["booking_details"]["preferred_time"] = "18:00:00"
+
+    result = run(service, message)
+
+    assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert result.safe_metadata["default_package_fallback"] is True
+    assert result.safe_metadata["interactive_message"]["kind"] == "list"
+    assert len(result.safe_metadata["interactive_message"]["options"]) == 6
+    assert result.context.details.total_guests == 20
+    assert result.context.details.preferred_date == date(2026, 9, 5)
+    assert "Guests:" not in result.draft_text
+    assert "Event Date:" not in result.draft_text
+    assert "₹5,999" in result.draft_text
+    assert "₹5,100" in result.draft_text
 
 
 def test_live_factory_never_constructs_raipur_or_knowledge(monkeypatch):
