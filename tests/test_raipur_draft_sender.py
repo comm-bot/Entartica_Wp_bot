@@ -314,14 +314,15 @@ def test_media_sequence_sends_one_interactive_cta_only_after_all_media():
     media_sequence = [
         {"type":"image", "url":"https://example.test/one.jpg", "caption":"Photo one"},
         {"type":"image", "url":"https://example.test/two.jpg", "caption":"Photo two"},
-        {"type":"video", "url":"https://example.test/video.mp4", "caption":"Video"},
+        {"type":"video", "url":"https://example.test/video-one.mp4", "caption":"Video one"},
+        {"type":"video", "url":"https://example.test/video-two.mp4", "caption":"Video two"},
     ]
     interactive = {
         "kind":"buttons", "body":"Ready to make it yours?", "fallback_text":"Ready to make it yours?",
         "button_label":"Choose an option", "options":[
             {"id":"coimbatore_pontoon_book_standard", "title":"Book Now"},
             {"id":"coimbatore_pontoon_customize", "title":"Customize"},
-            {"id":"coimbatore_pontoon_ask_question", "title":"Ask a Question"},
+            {"id":"coimbatore_pontoon_talk_sales", "title":"Talk to Sales Person"},
         ],
     }
     repository = Repo(row(draft_metadata={
@@ -333,11 +334,11 @@ def test_media_sequence_sends_one_interactive_cta_only_after_all_media():
     result = _send(repository, exotel)
 
     assert result.reason == "completed"
-    assert exotel.call_types == ["image", "image", "video", "interactive"]
+    assert exotel.call_types == ["image", "image", "video", "video", "interactive"]
     assert exotel.call_types.count("interactive") == 1
-    assert [option.title for option in exotel.calls[-1][1].options] == ["Book Now", "Customize", "Ask a Question"]
+    assert [option.title for option in exotel.calls[-1][1].options] == ["Book Now", "Customize", "Talk to Sales Person"]
     assert _send(repository, exotel).reason == "duplicate_send_prevented"
-    assert exotel.call_types == ["image", "image", "video", "interactive"]
+    assert exotel.call_types == ["image", "image", "video", "video", "interactive"]
 
 
 @pytest.mark.parametrize(

@@ -225,8 +225,8 @@ def _document_from_metadata(value: object) -> tuple[str, str, str] | None:
 
 
 def _media_sequence_from_metadata(value: object) -> tuple[tuple[str, str, str], ...] | None:
-    """Validate the narrowly scoped two-image/one-video action sequence."""
-    if not isinstance(value, list) or len(value) != 3:
+    """Validate the approved two-image/two-video Pontoon action sequence."""
+    if not isinstance(value, list) or len(value) != 4:
         return None
     result: list[tuple[str, str, str]] = []
     for item in value:
@@ -238,7 +238,7 @@ def _media_sequence_from_metadata(value: object) -> tuple[tuple[str, str, str], 
         if not isinstance(caption, str) or not caption.strip():
             return None
         result.append((str(item["type"]), url, caption))
-    if [item[0] for item in result] != ["image", "image", "video"]:
+    if [item[0] for item in result] != ["image", "image", "video", "video"]:
         return None
     return tuple(result)
 
