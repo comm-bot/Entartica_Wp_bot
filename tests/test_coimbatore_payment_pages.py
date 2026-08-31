@@ -114,7 +114,7 @@ def test_book_now_with_unknown_package_never_receives_a_payment_url():
     assert result.safe_metadata["payment_link_unavailable"] is True
 
 
-@pytest.mark.parametrize(("guests", "slab", "amount"), ((8, "up_to_9", 6375), (11, "up_to_12", 7650)))
+@pytest.mark.parametrize(("guests", "slab", "amount"), ((8, "up_to_9", 6375), (10, "up_to_12", 7650)))
 def test_higher_slab_book_now_never_uses_up_to_6_payment_destination(guests, slab, amount):
     result = handle_action("coimbatore_pontoon_book_standard", _context(STANDARD_PACKAGE_ID, guests),
                            public_base_url="https://book.entartica.test")
@@ -133,7 +133,7 @@ def test_configured_higher_slab_uses_only_its_own_payment_page():
 
 
 @pytest.mark.parametrize(("guests", "slab", "offer"), (
-    (4, "up_to_6", 5100), (8, "up_to_9", 6375), (11, "up_to_12", 7650),
+    (4, "up_to_6", 5100), (8, "up_to_9", 6375), (10, "up_to_12", 7650),
 ))
 def test_standard_actions_and_photo_continuation_preserve_pricing_context(guests, slab, offer):
     context = _context(STANDARD_PACKAGE_ID, guests)

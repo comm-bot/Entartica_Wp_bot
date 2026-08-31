@@ -632,7 +632,7 @@ Dedicated celebration page:
 
 Older/general Pontoon page:
 
-**Up to 12 people**
+**Up to 10 people**
 
 **Action:** Confirm whether 6 is the celebration package limit and 12 is the physical boat capacity.
 
@@ -866,7 +866,7 @@ Other options:
 |---|---|
 | Up to 6 guests | ₹6,000 |
 | Up to 9 guests | ₹7,500 |
-| Up to 12 guests | ₹9,000 |
+| Up to 10 guests | ₹9,000 |
 | Ride | 30 minutes |
 | Timing | Any time between 6:00 AM and 9:00 PM |
 | Food | Not included |
@@ -894,7 +894,7 @@ Other options:
 |---:|---:|
 | 1–6 | ₹6,000 |
 | 7–9 | ₹7,500 |
-| 10–12 | ₹9,000 |
+| 10 | ₹9,000 |
 
 ### Add-ons
 
@@ -919,7 +919,7 @@ Other options:
 - Family occasions
 - Friend-group celebrations
 - Small group celebrations
-- Groups up to 12 guests
+- Groups up to 10 guests
 
 ---
 
@@ -927,7 +927,7 @@ Other options:
 
 | Feature | Couple Romance Celebration | Family & Friends Celebration |
 |---|---:|---:|
-| Guests | 2 only | Up to 12 |
+| Guests | 2 only | Up to 10 |
 | Price | ₹3,999 | ₹6,000 / ₹7,500 / ₹9,000 |
 | Ride | 20 min | 30 min |
 | Red carpet | Yes | Yes |
@@ -970,7 +970,7 @@ Couple Romance     Family & Friends
      │                  │
      │             ┌────┼───────────┐
      │             ▼    ▼           ▼
-     │            1–6  7–9        10–12
+     │            1–6  7–9        10
      │             │    │           │
      │             ▼    ▼           ▼
      │           ₹6K  ₹7.5K        ₹9K
@@ -984,8 +984,8 @@ Couple Romance     Family & Friends
 - Exactly 2 guests + couple/private celebration → recommend Couple Romance Celebration first.
 - 3–6 guests → Family & Friends at ₹6,000.
 - 7–9 guests → Family & Friends at ₹7,500.
-- 10–12 guests → Family & Friends at ₹9,000.
-- More than 12 guests → escalate to sales team.
+- 10 guests → Family & Friends at ₹9,000.
+- More than 10 guests → escalate to sales team.
 - Do not invent discounts.
 - Do not quote availability without checking the live system.
 
@@ -1005,7 +1005,7 @@ A private celebration experience on the water at Entartica SeaWorld Coimbatore, 
 
 - **₹6,000 for up to 6 guests**
 - **₹7,500 for up to 9 guests**
-- **₹9,000 for up to 12 guests**
+- **₹9,000 for 10 guests**
 
 ### How long is the couple ride?
 
@@ -1145,7 +1145,7 @@ Do not ask every question at once unless the customer provides the information v
 | Says 2 people | Recommend Couple package |
 | Says 5 people | Recommend Family & Friends up to 6 |
 | Says 8 people | Recommend Family & Friends up to 9 |
-| Says 12 people | Recommend Family & Friends up to 12 |
+| Says 10 people | Recommend Family & Friends up to 10 |
 | Says 13+ people | Human sales handoff |
 | Asks price | Give applicable package price |
 | Wants special theme | Connect to agent |
@@ -1208,7 +1208,7 @@ This resolves the previously identified website conflicts around Pontoon capacit
 - Current Coimbatore activity list
 - Pontoon Celebration as the active celebration priority
 - Couple Romance Celebration — ₹3,999 / 2 guests
-- Family & Friends Celebration — ₹6,000 / 1–6, ₹7,500 / 7–9, ₹9,000 / 10–12
+- Family & Friends Celebration — ₹6,000 / 1–6, ₹7,500 / 7–9, ₹9,000 / 10
 - Package inclusions
 - Ride durations
 - 6 AM–9 PM timing window
@@ -1376,7 +1376,7 @@ Those actions require human/management handling.
 - Family & Friends:
   - Up to 6 → ₹6,000
   - Up to 9 → ₹7,500
-  - Up to 12 → ₹9,000
+  - 10 guests → ₹9,000
 - Above 12 guests: standard Pontoon package capacity is not available; human sales/management escalation is required.
 - Additional guests beyond the confirmed booking should not be accommodated.
 
@@ -1691,7 +1691,7 @@ Immediately connect to a human agent when:
 - Customer requests special cake pricing.
 - Customer requests fireworks arrangement.
 - Customer requests a weather exception.
-- Customer has more than 12 guests.
+- Customer has more than 10 guests.
 - Customer wants to bring an external photographer and approval is required.
 - Customer has an unresolved complaint.
 - Customer asks something the AI cannot verify.

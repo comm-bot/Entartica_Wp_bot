@@ -9,7 +9,7 @@
   "pricing": [
     {"slab_id": "up_to_6", "min_guests": 1, "max_guests": 6, "regular_price": 5999, "offer_price": 5100, "payment_button_env": "COIMBATORE_STANDARD_RAZORPAY_PAYMENT_BUTTON_ID"},
     {"slab_id": "up_to_9", "min_guests": 7, "max_guests": 9, "regular_price": 7500, "offer_price": 6375, "payment_button_env": "COIMBATORE_STANDARD_UP_TO_9_RAZORPAY_PAYMENT_BUTTON_ID"},
-    {"slab_id": "up_to_12", "min_guests": 10, "max_guests": 12, "regular_price": 9000, "offer_price": 7650, "payment_button_env": "COIMBATORE_STANDARD_UP_TO_12_RAZORPAY_PAYMENT_BUTTON_ID"}
+    {"slab_id": "up_to_12", "min_guests": 10, "max_guests": 10, "regular_price": 9000, "offer_price": 7650, "payment_button_env": "COIMBATORE_STANDARD_UP_TO_12_RAZORPAY_PAYMENT_BUTTON_ID"}
   ],
   "actions": [
     {"id": "coimbatore_pontoon_book_standard", "title": "Book Now"},

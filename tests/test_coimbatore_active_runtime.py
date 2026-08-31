@@ -555,7 +555,7 @@ def test_context_write_failure_does_not_crash_safe_first_reply(caplog):
 
 @pytest.mark.parametrize(
     ("message", "guests"),
-    [("we are couple", 2), ("five people", 5), ("family of 8", 8), ("11 guests", 11)],
+    [("we are couple", 2), ("five people", 5), ("family of 8", 8), ("10 guests", 10)],
 )
 def test_natural_guest_facts_select_current_package(message, guests):
     service, _contexts = orchestrator()

@@ -24,8 +24,8 @@ def test_guest_count_alone_does_not_resurrect_superseded_package_prices(monkeypa
     assert "Pending" not in result.source_heading
 
 
-def test_more_than_twelve_requires_handoff(monkeypatch):
-    result = provider(monkeypatch, ["Guest & Capacity Rules"]).answer("price", guest_count=13)
+def test_more_than_ten_requires_handoff(monkeypatch):
+    result = provider(monkeypatch, ["Guest & Capacity Rules"]).answer("price", guest_count=11)
     assert result.handoff_required
 
 

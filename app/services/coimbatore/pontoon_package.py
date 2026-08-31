@@ -78,7 +78,7 @@ def _standard_pricing_slabs() -> tuple[StandardPackagePricing, ...]:
         offer_price=int(row["offer_price"]),
     ) for row in rows)
     expected = (("up_to_6", 1, 6, 5999, 5100), ("up_to_9", 7, 9, 7500, 6375),
-                ("up_to_12", 10, 12, 9000, 7650))
+                ("up_to_12", 10, 10, 9000, 7650))
     if tuple((s.slab_id, s.min_guests, s.max_guests, s.regular_price, s.offer_price) for s in slabs) != expected:
         raise ValueError("invalid_standard_package_pricing")
     return slabs

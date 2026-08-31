@@ -210,9 +210,17 @@ def _guest_count(text: str, context: ConversationContext) -> int | None:
         )
         if bare and int(bare.group(1)) > 0:
             return int(bare.group(1))
-    if context.details.total_guests is None and not _DATE_RE.search(text):
+    # After an over-capacity typo, accept a bare in-capacity number as an
+    # explicit correction even though the previous turn completed the form.
+    # This remains narrow enough not to reinterpret FAQ quantities such as
+    # "2 pyros" as a guest count.
+    correcting_over_capacity = (
+        isinstance(context.details.total_guests, int)
+        and context.details.total_guests > 10
+    )
+    if (context.details.total_guests is None or correcting_over_capacity) and not _DATE_RE.search(text):
         bare = re.fullmatch(r"\s*(\d{1,3})\s*", text)
-        if bare and int(bare.group(1)) > 0:
+        if bare and 1 <= int(bare.group(1)) <= 10:
             return int(bare.group(1))
     return None
 
@@ -228,6 +236,12 @@ def has_qualification_update(text: object, context: ConversationContext) -> bool
         return True
     if context.pending_field in {"guest_count", "total_guests"} and re.fullmatch(
         r"\s*(?:\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen)\s*", text, re.I
+    ):
+        return True
+    if (
+        isinstance(context.details.total_guests, int)
+        and context.details.total_guests > 10
+        and re.fullmatch(r"\s*(?:10|[1-9])\s*", text)
     ):
         return True
     return False

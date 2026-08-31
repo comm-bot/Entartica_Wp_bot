@@ -94,7 +94,7 @@ def _standard_authority_score(package_id: str | None, topic: str | None, attribu
 
 def recommended_package(guests: int | None) -> str | None:
     if guests == 2: return "couple_romance"
-    if isinstance(guests, int) and 3 <= guests <= 12: return "family_friends"
+    if isinstance(guests, int) and 3 <= guests <= 10: return "family_friends"
     return None
 
 def resolve_topic(text: object) -> str | None:
@@ -121,19 +121,19 @@ def compose_approved_answer(topic: str, *, guest_count: int | None, package_id: 
         pricing = resolve_standard_package_pricing(guest_count)
         if topic == "overview":
             if pricing is None:
-                text = ("For more than 12 guests, we'll help you with a customized quotation 😊"
-                        if isinstance(guest_count, int) and guest_count > 12
+                text = ("For more than 10 guests, we'll help you with a customized quotation 😊"
+                        if isinstance(guest_count, int) and guest_count > 10
                         else "The Standard Pontoon Celebration price depends on the guest count. How many guests will be joining?")
                 return CoimbatoreAnswer(topic, text, "Standard Package Identity", package_id=package_id,
-                                        handoff_required=bool(guest_count and guest_count > 12))
+                                        handoff_required=bool(guest_count and guest_count > 10))
             return CoimbatoreAnswer(topic, f"The Standard Package offer for {guest_count} guests is ₹{pricing.offer_price:,}/- (original price ₹{pricing.regular_price:,}/-).", "Standard Package Identity", package_id=package_id)
         if topic == "price":
             if pricing is None:
-                text = ("For more than 12 guests, we'll help you with a customized quotation 😊"
-                        if isinstance(guest_count, int) and guest_count > 12
+                text = ("For more than 10 guests, we'll help you with a customized quotation 😊"
+                        if isinstance(guest_count, int) and guest_count > 10
                         else "Please share the guest count so I can show the approved Standard Package price.")
                 return CoimbatoreAnswer(topic, text, "Standard Package Commercial Terms", package_id=package_id,
-                                        handoff_required=bool(guest_count and guest_count > 12))
+                                        handoff_required=bool(guest_count and guest_count > 10))
             return CoimbatoreAnswer(topic, f"For {guest_count} guests, the Standard Package offer price is ₹{pricing.offer_price:,}/-; the original price is ₹{pricing.regular_price:,}/-.", "Standard Package Commercial Terms", package_id=package_id)
         if topic == "inclusions":
             return CoimbatoreAnswer(topic, "The Standard Package includes Red Carpet Welcome, 02 Cold Pyro Entry, Cake, Music Setup, Decoration, lake cake-cutting and a 30 Minutes Premium Boat Ride.", "Standard Package Inclusions", package_id=package_id)
@@ -159,7 +159,7 @@ def compose_approved_answer(topic: str, *, guest_count: int | None, package_id: 
             return _package_answer(guest_count, package_id)
         return CoimbatoreAnswer(topic, "We have two Pontoon Celebration options 😊\n• Couple Romance — ₹3,999\n• Standard Pontoon Celebration — ₹5,999\n\nWhich one would you like to see?", "Active Package Presentations")
     if topic == "price":
-        if guest_count and guest_count > 12: return CoimbatoreAnswer(topic, "For more than 12 guests, our team will help with the suitable celebration arrangement.", "Guest & Capacity Rules", handoff_required=True)
+        if guest_count and guest_count > 10: return CoimbatoreAnswer(topic, "For more than 10 guests, our team will help with the suitable celebration arrangement.", "Guest & Capacity Rules", handoff_required=True)
         if package_id == "couple_romance": return _package_answer(2, package_id)
         if package_id == "family_friends": return _package_answer(guest_count or 3, package_id)
         return CoimbatoreAnswer(topic, "Couple Romance is ₹3,999. The Standard Pontoon Celebration is ₹5,999. Which package would you like?", "Active Package Presentations")

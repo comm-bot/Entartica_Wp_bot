@@ -62,7 +62,7 @@ def test_render_uses_dynamic_values_and_never_internal_uri():
 @pytest.mark.parametrize(("guests", "slab", "regular", "offer", "paise"), (
     (1, "up_to_6", 5999, 5100, 510000), (6, "up_to_6", 5999, 5100, 510000),
     (7, "up_to_9", 7500, 6375, 637500), (9, "up_to_9", 7500, 6375, 637500),
-    (10, "up_to_12", 9000, 7650, 765000), (12, "up_to_12", 9000, 7650, 765000),
+    (10, "up_to_12", 9000, 7650, 765000),
 ))
 def test_standard_pricing_boundaries(guests, slab, regular, offer, paise):
     pricing = resolve_standard_package_pricing(guests)
@@ -70,7 +70,7 @@ def test_standard_pricing_boundaries(guests, slab, regular, offer, paise):
     assert (pricing.slab_id, pricing.regular_price, pricing.offer_price, pricing.offer_price_paise) == (slab, regular, offer, paise)
 
 
-@pytest.mark.parametrize("guests", (None, 0, -1, 13, 25))
+@pytest.mark.parametrize("guests", (None, 0, -1, 11, 12, 13, 25))
 def test_standard_pricing_never_defaults_invalid_or_custom_counts(guests):
     assert resolve_standard_package_pricing(guests) is None
 
@@ -78,7 +78,7 @@ def test_standard_pricing_never_defaults_invalid_or_custom_counts(guests):
 @pytest.mark.parametrize(("guests", "regular", "offer"), (
     (4, "~₹5,999/-~", "₹5,100/- (15% OFF) including GST"),
     (8, "~₹7,500/-~", "₹6,375/- (15% OFF) including GST"),
-    (11, "~₹9,000/-~", "₹7,650/- (15% OFF) including GST"),
+    (10, "~₹9,000/-~", "₹7,650/- (15% OFF) including GST"),
 ))
 def test_standard_package_renders_only_resolved_slab_price(guests, regular, offer):
     text = render_package(load_standard_package(), date(2026, 8, 30), guests)

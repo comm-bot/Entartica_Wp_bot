@@ -249,14 +249,14 @@ def test_multifield_past_date_preserves_guest_and_asks_only_for_date():
     assert "duration" not in result.draft_text.casefold()
 
 
-def test_pending_numeric_guest_above_twelve_uses_custom_quotation():
+def test_pending_numeric_guest_above_ten_uses_custom_quotation():
     bot = service()
     partial = run(bot, "30 August")
     assert partial.context.pending_field == "total_guests"
     result = run(bot, "25")
     assert result.context.details.total_guests == 25
     assert result.context.details.preferred_date == date(2026, 8, 30)
-    assert "more than 12 guests" in result.draft_text
+    assert "more than 10 guests" in result.draft_text
     assert result.human_handover_required is True
 
 
@@ -339,12 +339,29 @@ def test_standard_package_intent_beats_stale_package_and_guest_state():
     package = run(bot, "send me package details")
     assert package.context.details.total_guests == 25
     assert package.context.form_values["active_package_id"] == "coimbatore_pontoon_standard"
-    assert "more than 12" in package.draft_text and "₹5,999" not in package.draft_text
+    assert "more than 10" in package.draft_text and "₹5,999" not in package.draft_text
     corrected = run(bot, "we are 5 people")
     assert corrected.context.details.total_guests == 5
     assert corrected.context.form_values["active_package_id"] == "coimbatore_pontoon_standard"
     pyro = run(bot, "only 2 pyro entries???")
     assert pyro.context.details.total_guests == 5
+
+
+def test_bare_guest_correction_after_over_capacity_sends_package_details():
+    bot = service()
+    over_capacity = run(bot, "25 people, 5 September 2026")
+    assert over_capacity.context.details.total_guests == 25
+    assert "more than 10 guests" in over_capacity.draft_text
+    assert over_capacity.human_handover_required is True
+
+    corrected = run(bot, "8")
+
+    assert corrected.context.details.total_guests == 8
+    assert corrected.human_handover_required is False
+    assert corrected.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "₹7,500" in corrected.draft_text
+    assert "₹6,375" in corrected.draft_text
+    assert "more than 10 guests" not in corrected.draft_text
 
 
 def test_pyro_numbers_never_overwrite_stale_guest_count_and_definition_retrieves():

@@ -763,9 +763,9 @@ class CoimbatoreInboundOrchestrator:
     def _package_result(self, context: ConversationContext, package_id: str | None):
         if package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}: raise ValueError("package_selection_required")
         pricing = resolve_standard_package_pricing(context.details.total_guests) if package_id == STANDARD_PACKAGE_ID else None
-        if package_id == STANDARD_PACKAGE_ID and isinstance(context.details.total_guests, int) and context.details.total_guests > 12:
+        if package_id == STANDARD_PACKAGE_ID and isinstance(context.details.total_guests, int) and context.details.total_guests > 10:
             result = self._handle_package_action("coimbatore_pontoon_customize", context)
-            return replace(result, draft_text="For more than 12 guests, we'll help you with a customized quotation 😊",
+            return replace(result, draft_text="For more than 10 guests, we'll help you with a customized quotation 😊",
                            reason_code="coimbatore_standard_custom_quote_required")
         with latency_stage("exact_KB_package_lookup"), latency_stage("YAML_load"), latency_stage("package_selection"):
             package = load_package(package_id)
@@ -1047,9 +1047,9 @@ def _business_output(understanding: CoimbatoreUnderstanding, guests: int | None,
                       price_inr=6000 if guests <= 6 else 7500 if guests <= 9 else 9000)
     elif package_id == "coimbatore_pontoon_standard":
         output.update(selected_package_name="Pontoon Boat Celebration Package", price_inr=5999)
-    if isinstance(guests, int) and guests > 12 and package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}:
+    if isinstance(guests, int) and guests > 10 and package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}:
         output.update(selected_package_id=None, selected_package_name=None, price_inr=None,
-                      handoff_required=True, handoff_reason="group_over_12")
+                      handoff_required=True, handoff_reason="group_over_10")
     if understanding.intent == CustomerIntent.AVAILABILITY or understanding.availability_intent:
         output.update(handoff_required=True, handoff_reason="live_availability_unverified")
     if understanding.intent == CustomerIntent.PAYMENT or understanding.payment_intent:
@@ -1091,7 +1091,7 @@ def _safe_composer_fallback(understanding: CoimbatoreUnderstanding, business: di
     if reason == "discount_requires_team":
         return "Discounts need confirmation from our team. I'll have them assist you."
     if reason == "group_over_12":
-        return "For more than 12 guests, our team will help with the suitable celebration arrangement."
+        return "For more than 10 guests, our team will help with the suitable celebration arrangement."
     name, price = business.get("selected_package_name"), business.get("price_inr")
     if understanding.intent in {CustomerIntent.QUALIFICATION_UPDATE, CustomerIntent.PACKAGE_DISCOVERY} and name and price:
         answer = f"{name} is the applicable package at ₹{price:,}."
