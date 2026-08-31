@@ -164,11 +164,12 @@ def test_approved_location_answer_and_photo_video_action_send_three_messages():
 
     media = run(bot, "See Photo & Video")
     sequence = media.safe_metadata["media_sequence"]
-    assert [item["type"] for item in sequence] == ["image", "image", "video"]
+    assert [item["type"] for item in sequence] == ["image", "image", "video", "video"]
     assert [item["url"] for item in sequence] == [
         "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_standard_package_coimbatore.jpeg",
         "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_celebration_photo_coimbatore.jpeg",
         "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_coimbatore.mp4",
+        "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_2.mp4",
     ]
     repository = FakeOutboundDraftRepository()
     created = create_draft_after_orchestration(

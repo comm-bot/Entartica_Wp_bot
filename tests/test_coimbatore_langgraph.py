@@ -67,7 +67,7 @@ def test_graph_routes_faq_booking_question_handoff_and_photos():
     bot.confirm_standard_package_presented(package, "customer", "conversation")
     photos = run(bot, "See Photo & Video")
     assert photos.safe_metadata["graph_route"] == "photos"
-    assert [item["type"] for item in photos.safe_metadata["media_sequence"]] == ["image", "image", "video"]
+    assert [item["type"] for item in photos.safe_metadata["media_sequence"]] == ["image", "image", "video", "video"]
 
 
 def test_graph_flag_false_preserves_existing_fallback_and_package_cache_hits():

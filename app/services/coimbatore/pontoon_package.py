@@ -540,11 +540,11 @@ def handle_action(
             )
         media_group = "couple_action_media" if active_package == COUPLE_PACKAGE_ID else "action_media"
         sequence = (config.get(media_group) or {}).get("coimbatore_pontoon_more_photos")
-        expected_count = 3
+        expected_count = 4
         if not isinstance(sequence, list) or len(sequence) != expected_count:
             raise ValueError("coimbatore_photo_video_sequence_missing")
         package_label = "Couple Romance" if active_package == COUPLE_PACKAGE_ID else "Pontoon Celebration"
-        text = f"Here are the approved {package_label} photo{'s' if expected_count == 3 else ''} and video 😊"
+        text = f"Here are the approved {package_label} photos and videos 😊"
         metadata["media_sequence"] = [
             {"type": str(item["type"]), "url": str(item["url"]),
              "caption": f"{package_label} photo" if item["type"] == "image" else f"{package_label} video"}

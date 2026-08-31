@@ -252,8 +252,8 @@ def test_package_actions_preserve_qualification_state():
     offered = run(service, "30 August, 5 people")
     confirm_package(service, offered)
     photos = run(service, "show more photos")
-    assert photos.draft_text.startswith("Here are the approved Pontoon Celebration photos and video")
-    assert [item["type"] for item in photos.safe_metadata["media_sequence"]] == ["image", "image", "video"]
+    assert photos.draft_text.startswith("Here are the approved Pontoon Celebration photos and videos")
+    assert [item["type"] for item in photos.safe_metadata["media_sequence"]] == ["image", "image", "video", "video"]
     assert photos.safe_metadata["media_sequence"][0]["url"].endswith("pontoon_standard_package_coimbatore.jpeg")
     assert photos.safe_metadata["post_media_cta"] is True
     assert [option["title"] for option in photos.safe_metadata["interactive_message"]["options"]] == [
@@ -314,7 +314,7 @@ def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
 
     media = run(service, "See Photo & Video")
 
-    assert media.draft_text == "Here are the approved Couple Romance photos and video 😊"
+    assert media.draft_text == "Here are the approved Couple Romance photos and videos 😊"
     assert media.safe_metadata["media_sequence"] == [
         {
             "type": "image",
@@ -329,6 +329,11 @@ def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
         {
             "type": "video",
             "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_coimbatore.mp4",
+            "caption": "Couple Romance video",
+        },
+        {
+            "type": "video",
+            "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_2.mp4",
             "caption": "Couple Romance video",
         },
     ]
