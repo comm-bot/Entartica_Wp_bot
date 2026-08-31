@@ -31,6 +31,11 @@ STANDARD_PACKAGE_BROCHURE_URL = (
     "Pontoon_Celebration_Brochure.pdf"
 )
 
+RETURNING_CUSTOMER_MENU_BODY = (
+    "Hi there! 👋 Welcome back to Entartica Coimbatore.\n\n"
+    "How can I help you plan your Pontoon Celebration today?"
+)
+
 @dataclass(frozen=True)
 class StandardPackage:
     package_id: str
@@ -247,6 +252,28 @@ def post_media_cta(package_id: str) -> InteractiveMessage:
             InteractiveOption("coimbatore_pontoon_customize", "Customize"),
             InteractiveOption("coimbatore_pontoon_ask_question", "Ask a Question"),
         ),
+    )
+
+
+def returning_customer_menu() -> InteractiveMessage:
+    """Offer three bounded sales paths to a known customer who greets again."""
+
+    return InteractiveMessage(
+        kind="buttons",
+        body=RETURNING_CUSTOMER_MENU_BODY,
+        fallback_text=(
+            f"{RETURNING_CUSTOMER_MENU_BODY}\n\n"
+            "1. See Standard Package\n"
+            "2. See Couple Package\n"
+            "3. Photos & Videos"
+        ),
+        button_label="Choose an option",
+        options=(
+            InteractiveOption("coimbatore_pontoon_check_standard", "See Standard Package"),
+            InteractiveOption("coimbatore_pontoon_check_couple", "See Couple Package"),
+            InteractiveOption("coimbatore_pontoon_more_photos", "Photos & Videos"),
+        ),
+        header_image_url=STANDARD_PACKAGE_IMAGE_URL,
     )
 
 def package_presented(context: ConversationContext) -> bool:

@@ -385,7 +385,8 @@ def test_qualified_reload_without_presented_marker_sends_package_not_acknowledge
     service, contexts = orchestrator()
     run(service, "30 August, 5 people")
     result = run(service, "hello")
-    assert result.draft_text == "Hi 😊 Ready to continue with your Pontoon Celebration?"
+    assert result.draft_text.startswith("Hi there! 👋 Welcome back")
+    assert result.reason_code == "coimbatore_returning_customer_menu"
     assert result.draft_text != "Great 🎉 I have your celebration date and number of guests."
 
 
@@ -409,10 +410,46 @@ def test_presented_package_routes_onward_without_qualification_loop_or_resend():
     assert hello.draft_text != "Great 🎉 I have your celebration date and number of guests."
     assert "Rack Rate" not in hello.draft_text
     assert hello.detected_intent == "greeting"
-    assert hello.draft_text == "Hi 😊 Ready to continue with your Pontoon Celebration?"
+    assert hello.draft_text.startswith("Hi there! 👋 Welcome back")
+    assert hello.safe_metadata["returning_customer_menu"] is True
     cake = run(service, "is cake included?")
     assert "Cake is included in the Standard Package" in cake.draft_text
     assert cake.safe_metadata["raipur_retrieval_used"] is False
+
+
+def test_returning_greeting_sends_one_image_header_with_three_buttons():
+    service, _contexts = orchestrator()
+    run(service, "30 August, 5 people")
+
+    result = run(service, "hii")
+
+    interactive = result.safe_metadata["interactive_message"]
+    assert interactive["kind"] == "buttons"
+    assert interactive["header_image_url"] == (
+        "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/"
+        "pontoon_boat_celebration_Coimbtore.jpg"
+    )
+    assert [option["title"] for option in interactive["options"]] == [
+        "See Standard Package", "See Couple Package", "Photos & Videos",
+    ]
+    assert result.draft_text == (
+        "Hi there! 👋 Welcome back to Entartica Coimbatore.\n\n"
+        "How can I help you plan your Pontoon Celebration today?"
+    )
+
+
+def test_returning_standard_button_sends_default_5999_package_and_preserves_context():
+    service, _contexts = orchestrator()
+    run(service, "30 August, 8 people")
+    run(service, "hello")
+
+    result = run(service, "coimbatore_pontoon_check_standard")
+
+    assert result.safe_metadata["default_package_fallback"] is True
+    assert "₹5,999" in result.draft_text and "₹5,100" in result.draft_text
+    assert "Guests:" not in result.draft_text and "Event Date:" not in result.draft_text
+    assert result.context.details.total_guests == 8
+    assert result.context.details.preferred_date == date(2026, 8, 30)
 
 
 def test_fresh_partial_and_presented_greetings_are_eligible():

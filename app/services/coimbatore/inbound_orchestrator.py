@@ -26,7 +26,7 @@ from app.services.coimbatore.pontoon_qualification import (
 from app.services.coimbatore.pontoon_package import (
     COUPLE_PACKAGE_ID, STANDARD_PACKAGE_ID, action_id, action_message, handle_action,
     is_package_request, load_package, package_presented, package_request_id, render_package,
-    resolve_standard_package_pricing,
+    resolve_standard_package_pricing, returning_customer_menu,
 )
 from app.services.raipur.response_models import ConversationContext, ConversationResult
 from app.services.raipur.sales_state import SalesStage
@@ -197,12 +197,20 @@ class CoimbatoreInboundOrchestrator:
                     "coimbatore_state_mode=session session_state_%s=true stale_supabase_state_ignored=true",
                     "loaded" if stored is not None else "created",
                 )
-            context, _expired = _context_from_record(
+            context, context_expired = _context_from_record(
                 (current_state if current_state is not None else stored or conversation.get("service_context"))
                 if persistent else stored,
                 self._context_ttl_minutes,
             )
         fresh = context is None or context.selected_location != "coimbatore" or context.last_service_code != "pontoon_celebration"
+        returning_customer = context_expired or (
+            context is not None
+            and context.sales_stage in {
+                SalesStage.QUALIFIED, SalesStage.PACKAGE_PRESENTED,
+                SalesStage.INTERESTED, SalesStage.DETAILS_COLLECTED,
+                SalesStage.PAYMENT_PENDING, SalesStage.BOOKED, SalesStage.HANDOVER,
+            }
+        )
         active = context if not fresh else _empty_context(selected_location="coimbatore")
         identity_values = dict(active.form_values or {})
         identity_values.update({
@@ -231,7 +239,26 @@ class CoimbatoreInboundOrchestrator:
             )
             location = replace(location, detected_intent="location")
             return self._finalize(location, customer_id, conversation_id, fresh, source_message_id)
+        if _is_greeting(content) and returning_customer:
+            result = self._returning_customer_menu_result(active)
+            return self._finalize(result, customer_id, conversation_id, False, source_message_id)
         selected_action = action_id(content)
+        if selected_action == "coimbatore_pontoon_check_standard":
+            result = self._default_standard_package_result(active)
+            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        if selected_action == "coimbatore_pontoon_check_couple":
+            result = self._package_result(active, COUPLE_PACKAGE_ID)
+            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        if (
+            selected_action == "coimbatore_pontoon_more_photos"
+            and bool((active.form_values or {}).get("returning_customer_menu_shown"))
+        ):
+            values = dict(active.form_values or {})
+            values["active_package_id"] = STANDARD_PACKAGE_ID
+            result = self._handle_package_action(
+                selected_action, replace(active, form_values=values)
+            )
+            return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         if selected_action and package_qualification_ready(active):
             result = self._handle_package_action(selected_action, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
@@ -846,6 +873,43 @@ class CoimbatoreInboundOrchestrator:
             fallback,
             context=replace(fallback.context, details=saved_details),
             safe_metadata=metadata,
+        )
+
+    def _returning_customer_menu_result(self, context: ConversationContext) -> ConversationResult:
+        values = dict(context.form_values or {})
+        values.update({
+            "active_package_id": STANDARD_PACKAGE_ID,
+            "returning_customer_menu_shown": True,
+        })
+        updated = replace(
+            context,
+            form_values=values,
+            selected_location="coimbatore",
+            last_service_code="pontoon_celebration",
+            last_service_name="Pontoon Boat Celebration",
+            pending_field=None,
+        )
+        interactive = returning_customer_menu()
+        return ConversationResult(
+            action="answer_information",
+            draft_text=interactive.body,
+            reason_code="coimbatore_returning_customer_menu",
+            detected_intent="greeting",
+            detected_location="coimbatore",
+            response_language="en",
+            human_handover_required=False,
+            context=updated,
+            safe_metadata={
+                "response_basis": "deterministic",
+                "structured_grounding": True,
+                "customer_response_sanitized": True,
+                "automatic_reply_category": "information",
+                "service_code": "pontoon_celebration",
+                "package_id": STANDARD_PACKAGE_ID,
+                "returning_customer_menu": True,
+                "interactive_message": interactive.as_metadata(),
+                "interactive_message_type": "buttons",
+            },
         )
 
     def confirm_standard_package_presented(self, result: ConversationResult, customer_id: str, conversation_id: str) -> bool:

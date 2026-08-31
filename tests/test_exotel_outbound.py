@@ -22,6 +22,7 @@ from app.services.outbound_messages import (
     OutboundMessagingDisabledError,
 )
 from app.schemas.interactive_messages import InteractiveMessage, InteractiveOption, customer_details_flow
+from app.services.coimbatore.pontoon_package import returning_customer_menu
 from app.services.latency import LatencyTrace, use_latency_trace
 
 
@@ -79,6 +80,24 @@ def test_standard_package_provider_payload_is_one_image_header_body_and_four_row
     assert provider["body"]["text"] == body
     assert len(provider["action"]["sections"][0]["rows"]) == 4
     assert provider["body"]["text"] != "What would you like to do next?"
+
+
+def test_returning_customer_menu_is_one_image_header_message_with_three_buttons() -> None:
+    payload = _client(lambda request: httpx.Response(202)).build_interactive_payload(
+        to_number="+919000000000", interactive=returning_customer_menu(),
+    )
+
+    messages = payload["whatsapp"]["messages"]
+    assert len(messages) == 1
+    provider = messages[0]["content"]["interactive"]
+    assert provider["type"] == "button"
+    assert provider["header"] == {"type": "image", "image": {"link": (
+        "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/"
+        "pontoon_boat_celebration_Coimbtore.jpg"
+    )}}
+    assert [button["reply"]["title"] for button in provider["action"]["buttons"]] == [
+        "See Standard Package", "See Couple Package", "Photos & Videos",
+    ]
 
 
 def test_mocked_two_second_exotel_delay_is_attributed_to_http_stage() -> None:
