@@ -77,7 +77,9 @@ class CoimbatoreLangGraphWorkflow:
         if re.search(r"available|availability|slot", text): route = "availability"
         elif re.search(r"payment|paid", text): route = "payment"
         elif "coimbatore_pontoon_book_standard" in text or re.search(r"\bbook now\b", text): route = "booking"
-        elif "coimbatore_pontoon_customize" in text or text == "customize": route = "handoff"
+        elif ("coimbatore_pontoon_customize" in text or text == "customize"
+              or "coimbatore_pontoon_talk_sales" in text
+              or text in {"talk to sales person", "talk to sales", "sales person"}): route = "handoff"
         elif "coimbatore_pontoon_more_photos" in text or "more photos" in text or "photo & video" in text or "photo and video" in text: route = "photos"
         elif "coimbatore_pontoon_ask_question" in text or text == "ask a question": route = "faq_wait"
         elif re.search(r"standard package|5999 package|send package|package details", text): route = "package_router"

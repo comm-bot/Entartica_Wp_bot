@@ -207,5 +207,5 @@ def test_approved_location_answer_and_photo_video_action_send_three_messages():
     cta = captured[-1]["whatsapp"]["messages"][0]["content"]["interactive"]
     assert cta["type"] == "button"
     assert [button["reply"]["title"] for button in cta["action"]["buttons"]] == [
-        "Book Now", "Customize", "Ask a Question",
+        "Book Now", "Customize", "Talk to Sales Person",
     ]

@@ -250,7 +250,7 @@ def post_media_cta(package_id: str) -> InteractiveMessage:
         options=(
             InteractiveOption("coimbatore_pontoon_book_standard", "Book Now"),
             InteractiveOption("coimbatore_pontoon_customize", "Customize"),
-            InteractiveOption("coimbatore_pontoon_ask_question", "Ask a Question"),
+            InteractiveOption("coimbatore_pontoon_talk_sales", "Talk to Sales Person"),
         ),
     )
 
@@ -288,6 +288,7 @@ def action_id(text: object) -> str | None:
     value = text.casefold().strip() if isinstance(text, str) else ""
     exact = {
         "coimbatore_pontoon_book_standard", "coimbatore_pontoon_ask_question",
+        "coimbatore_pontoon_talk_sales",
         "coimbatore_pontoon_customize", "coimbatore_pontoon_more_photos",
         "coimbatore_pontoon_brochure",
         "coimbatore_pontoon_check_couple", "coimbatore_pontoon_check_standard",
@@ -295,6 +296,7 @@ def action_id(text: object) -> str | None:
     if value in exact: return value
     if re.search(r"\b(book now|book this|book package|book it|i want this|i am interested|proceed|how to book|send payment|i want to confirm)\b", value): return "coimbatore_pontoon_book_standard"
     if re.search(r"\b(ask a question|i have a question|question about package)\b", value): return "coimbatore_pontoon_ask_question"
+    if re.search(r"\b(talk to (?:a |the )?sales(?: person| team)?|sales person|contact sales)\b", value): return "coimbatore_pontoon_talk_sales"
     if re.search(r"\b(customize|custom package|special decoration|special request|i want changes|call me|talk to team|need human|contact person)\b", value): return "coimbatore_pontoon_customize"
     if re.search(r"\b(see photo (?:and|&) video|show more photos|more pictures|photos|show images|aur photos|photo dikhao)\b", value): return "coimbatore_pontoon_more_photos"
     if re.search(r"\b(?:see|send|show|open|download)(?: the)?(?: pontoon(?: boat)?(?: celebration)?)? brochure\b", value): return "coimbatore_pontoon_brochure"
@@ -393,7 +395,7 @@ def handle_action(
     planned, guests = context.details.preferred_date, context.details.total_guests
     metadata = {"response_mode": "deterministic_interactive", "response_basis": "deterministic", "structured_grounding": True,
                 "customer_response_sanitized": True, "button_action": action, "service_code": "pontoon_celebration"}
-    handover = action == "coimbatore_pontoon_customize"
+    handover = action in {"coimbatore_pontoon_customize", "coimbatore_pontoon_talk_sales"}
     if action in {"coimbatore_pontoon_check_couple", "coimbatore_pontoon_check_standard"}:
         package_id = COUPLE_PACKAGE_ID if action == "coimbatore_pontoon_check_couple" else STANDARD_PACKAGE_ID
         package = load_package(package_id)
@@ -502,8 +504,17 @@ def handle_action(
         package_name = "Couple Romance Package" if active_package == COUPLE_PACKAGE_ID else "Standard Pontoon Package"
         text = f"Sure 😊 What would you like to know about the {package_name}?"
     elif handover:
-        text = "Sure 😊 Our team will help you with a customized celebration requirement."
+        text = (
+            "Sure 😊 I’ll connect you with our sales team for further assistance."
+            if action == "coimbatore_pontoon_talk_sales"
+            else "Sure 😊 Our team will help you with a customized celebration requirement."
+        )
         context = replace(context, sales_stage=SalesStage.HANDOVER)
+        metadata["handover_reason"] = (
+            "customer_requested_sales_person"
+            if action == "coimbatore_pontoon_talk_sales"
+            else "customer_requested_customization"
+        )
         metadata["handover_context"] = {
             "location": "coimbatore", "service": "pontoon_celebration",
             "package_id": (context.form_values or {}).get("active_package_id"),

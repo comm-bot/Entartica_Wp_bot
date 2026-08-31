@@ -257,7 +257,7 @@ def test_package_actions_preserve_qualification_state():
     assert photos.safe_metadata["media_sequence"][0]["url"].endswith("pontoon_standard_package_coimbatore.jpeg")
     assert photos.safe_metadata["post_media_cta"] is True
     assert [option["title"] for option in photos.safe_metadata["interactive_message"]["options"]] == [
-        "Book Now", "Customize", "Ask a Question",
+        "Book Now", "Customize", "Talk to Sales Person",
     ]
     assert all("photo" not in option["title"].casefold() for option in photos.safe_metadata["interactive_message"]["options"])
     assert photos.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
@@ -286,7 +286,7 @@ def test_standard_package_can_open_couple_package_in_same_interactive_layout():
     interactive = couple.safe_metadata["interactive_message"]
     assert interactive["kind"] == "list"
     assert [option["title"] for option in interactive["options"]] == [
-        "Book Now", "Ask a Question", "Customize", "See Photo & Video", "Check Standard Package",
+        "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video", "Check Standard Package",
     ]
     assert couple.context.form_values["active_package_id"] == "coimbatore_pontoon_couple_romance"
     settings = SimpleNamespace(
@@ -335,7 +335,7 @@ def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
     assert media.safe_metadata["package_id"] == "coimbatore_pontoon_couple_romance"
     assert media.safe_metadata["interactive_message"]["kind"] == "buttons"
     assert [option["title"] for option in media.safe_metadata["interactive_message"]["options"]] == [
-        "Book Now", "Customize", "Ask a Question",
+        "Book Now", "Customize", "Talk to Sales Person",
     ]
 
     booked = run(service, "Book Now")
@@ -346,7 +346,7 @@ def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
 def test_post_media_customize_and_question_preserve_active_package_context():
     for package_id in ("coimbatore_pontoon_standard", "coimbatore_pontoon_couple_romance"):
         service, _contexts = orchestrator()
-        offered = run(service, "30 August, 5 people")
+        offered = run(service, "30 September, 5 people")
         confirm_package(service, offered)
         if package_id.endswith("couple_romance"):
             run(service, "Check Couple Package")
@@ -358,6 +358,11 @@ def test_post_media_customize_and_question_preserve_active_package_context():
 
         customize = run(service, "Customize")
         assert customize.safe_metadata["handover_context"]["package_id"] == package_id
+
+        sales = run(service, "Talk to Sales Person")
+        assert sales.human_handover_required is True
+        assert sales.safe_metadata["handover_reason"] == "customer_requested_sales_person"
+        assert sales.safe_metadata["handover_context"]["package_id"] == package_id
 
 
 def test_media_action_without_package_context_does_not_default_to_standard():

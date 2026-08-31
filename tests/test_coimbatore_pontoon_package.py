@@ -31,13 +31,13 @@ def test_approved_kb_and_yaml_load_without_raipur_facts():
     assert package.refund_rule == "Full refund if cancelled before 24 hours of the event date."
     assert package.add_ons == ()
     assert [item.id for item in package.actions] == [
-        "coimbatore_pontoon_book_standard", "coimbatore_pontoon_ask_question",
+        "coimbatore_pontoon_book_standard", "coimbatore_pontoon_talk_sales",
         "coimbatore_pontoon_customize", "coimbatore_pontoon_more_photos",
         "coimbatore_pontoon_brochure",
         "coimbatore_pontoon_check_couple",
     ]
     assert [item.title for item in package.actions] == [
-        "Book Now", "Ask a Question", "Customize", "See Photo & Video",
+        "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video",
         "See Pontoon Brochure", "Check Couple Package",
     ]
 
@@ -94,6 +94,7 @@ def test_typed_and_stable_actions_are_deterministic():
     assert action_id("send pontoon boat celebration brochure") == "coimbatore_pontoon_brochure"
     assert action_id("coimbatore_pontoon_book_standard") == "coimbatore_pontoon_book_standard"
     assert action_id("Ask a Question") == "coimbatore_pontoon_ask_question"
+    assert action_id("Talk to Sales Person") == "coimbatore_pontoon_talk_sales"
     assert action_id("Check Couple Package") == "coimbatore_pontoon_check_couple"
     assert is_package_request("what is standard package")
     assert is_package_request("send package")

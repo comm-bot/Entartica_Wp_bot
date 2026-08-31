@@ -13,7 +13,7 @@
   ],
   "actions": [
     {"id": "coimbatore_pontoon_book_standard", "title": "Book Now"},
-    {"id": "coimbatore_pontoon_ask_question", "title": "Ask a Question"},
+    {"id": "coimbatore_pontoon_talk_sales", "title": "Talk to Sales Person"},
     {"id": "coimbatore_pontoon_customize", "title": "Customize"},
     {"id": "coimbatore_pontoon_more_photos", "title": "See Photo & Video"},
     {"id": "coimbatore_pontoon_brochure", "title": "See Pontoon Brochure"},

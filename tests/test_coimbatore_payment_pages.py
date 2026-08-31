@@ -141,7 +141,7 @@ def test_standard_actions_and_photo_continuation_preserve_pricing_context(guests
     assert photos.safe_metadata["package_id"] == STANDARD_PACKAGE_ID
     assert photos.context.details.total_guests == guests
     assert [item["title"] for item in photos.safe_metadata["interactive_message"]["options"]] == [
-        "Book Now", "Customize", "Ask a Question",
+        "Book Now", "Customize", "Talk to Sales Person",
     ]
     question = handle_action("coimbatore_pontoon_ask_question", photos.context)
     assert question.context.details.total_guests == guests

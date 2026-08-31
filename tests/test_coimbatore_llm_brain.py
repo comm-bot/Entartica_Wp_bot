@@ -130,7 +130,7 @@ def test_fresh_package_interest_gets_full_welcome_then_auto_standard_draft():
     interactive = package.safe_metadata["interactive_message"]
     assert interactive["kind"] == "list"
     assert [option["title"] for option in interactive["options"]] == [
-        "Book Now", "Ask a Question", "Customize", "See Photo & Video",
+        "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video",
         "See Pontoon Brochure", "Check Couple Package",
     ]
 
@@ -207,7 +207,7 @@ def test_explicit_standard_package_is_canonical_media_buttons_dynamic_and_resend
         assert metadata["interactive_message"]["header_image_url"] is None
         assert metadata["interactive_message"]["kind"] == "list"
         assert [item["title"] for item in metadata["interactive_message"]["options"]] == [
-            "Book Now", "Ask a Question", "Customize", "See Photo & Video",
+            "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video",
             "See Pontoon Brochure", "Check Couple Package",
         ]
         assert all(value in result.draft_text for value in (
@@ -549,7 +549,7 @@ def test_live_like_standard_package_sends_one_text_message_with_all_actions():
     ))
     rows = interactive["action"]["sections"][0]["rows"]
     assert [row["title"] for row in rows] == [
-        "Book Now", "Ask a Question", "Customize", "See Photo & Video",
+        "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video",
         "See Pontoon Brochure", "Check Couple Package",
     ]
     assert interactive["body"]["text"] != "What would you like to do next?"
