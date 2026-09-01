@@ -11,6 +11,7 @@ from app.api.coimbatore_payments import router as coimbatore_payments_router
 from app.api.coimbatore_customer_details import router as coimbatore_customer_details_router
 from app.api.status_webhook import router as status_webhook_router
 from app.api.razorpay_webhook import router as razorpay_webhook_router
+from app.api.echt_connect_webhook import router as echt_connect_webhook_router
 from app.config import get_settings
 from app.integrations.supabase import get_supabase_client, log_startup_readiness
 from app.services.latency import configure_latency_logging
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(exotel_webhook_router)
     app.include_router(status_webhook_router)
     app.include_router(razorpay_webhook_router)
+    app.include_router(echt_connect_webhook_router)
 
     @app.on_event("startup")
     async def verify_supabase_readiness() -> None:

@@ -41,7 +41,7 @@ class ExotelWhatsAppEnvelope(BaseModel):
 class NormalizedInboundMessage(BaseModel):
     """Provider-neutral inbound message used beyond the adapter layer."""
 
-    external_provider: Literal["exotel"] = "exotel"
+    external_provider: Literal["exotel", "echt_connect"] = "exotel"
     external_message_id: str
     customer_whatsapp_number: str
     business_whatsapp_number: str

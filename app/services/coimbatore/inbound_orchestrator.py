@@ -97,7 +97,15 @@ class CoimbatoreInboundOrchestrator:
         current_state: Any = None,
     ):
         customer_id, conversation_id = customer.get("id"), conversation.get("id")
-        if (bool(getattr(self._settings, "coimbatore_customer_details_form_enabled", False))
+        # ECHT Connect's callback contract supports text/handover only and
+        # cannot launch a native WhatsApp Flow. CRM-originated messages already
+        # carry the customer phone and name, so keep the native details-Flow
+        # prerequisite exclusively on the Exotel transport.
+        requires_native_customer_details = (
+            getattr(message, "external_provider", "exotel") == "exotel"
+        )
+        if (requires_native_customer_details
+                and bool(getattr(self._settings, "coimbatore_customer_details_form_enabled", False))
                 and not customer_details_complete(customer)):
             form_response = getattr(message, "form_response", None)
             if getattr(message, "message_type", None) == "flow" and isinstance(form_response, dict):

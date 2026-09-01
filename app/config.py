@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     exotel_api_base_url: str = Field(default="https://api.exotel.com", validation_alias=AliasChoices("EXOTEL_BASE_URL", "EXOTEL_API_BASE_URL"))
     exotel_whatsapp_from: str | None = None
     exotel_status_callback_url: str | None = None
+    echt_connect_enabled: bool = False
+    echt_connect_numbers_json: SecretStr | None = None
+    echt_connect_callback_timeout_seconds: float = 10.0
     public_base_url: str | None = None
     coimbatore_customer_details_form_enabled: bool = True
     coimbatore_customer_details_form_ttl_minutes: int = 30
