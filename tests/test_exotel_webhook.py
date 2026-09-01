@@ -237,7 +237,8 @@ def test_echt_enabled_makes_exotel_skip_completed_customer_text(monkeypatch) -> 
     configured = _settings()
     configured.raipur_inbound_orchestrator_enabled = True
     configured.echt_connect_enabled = True
-    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    service = Service()
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", lambda: service)
     monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", lambda: orchestrator)
     message = exotel_webhook.normalize_exotel_payload(_payload())[0]
 
@@ -293,6 +294,79 @@ def test_echt_enabled_still_allows_exotel_owned_package_list_reply(monkeypatch) 
     asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
 
     assert orchestrator.calls == 1
+
+
+def test_book_now_list_reply_sends_one_idempotent_lead_email(monkeypatch) -> None:
+    class Service:
+        calls = 0
+
+        def process(self, _message):
+            self.calls += 1
+            return InboundMessageResult(
+                self.calls > 1,
+                {"id": "customer", "name": "Mandip", "email": "mandip@example.com",
+                 "whatsapp_number": "+919876543210"},
+                {"id": "conversation"},
+                {"id": "inbound"},
+            )
+
+    context = SimpleNamespace(
+        details=SimpleNamespace(customer_name="Mandip", total_guests=7, preferred_date=None),
+        form_values={"customer_email": "mandip@example.com"},
+    )
+
+    class Orchestrator:
+        def process(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                action="answer_information", reason_code="coimbatore_package_action",
+                context=context,
+            )
+
+    sent = []
+
+    class Notifier:
+        def __init__(self, _settings):
+            pass
+
+        def send(self, lead):
+            sent.append(lead)
+            return True
+
+    action_payload = _payload()
+    action_payload["whatsapp"]["messages"][0]["content"] = {
+        "type": "interactive",
+        "interactive": {
+            "type": "list_reply",
+            "list_reply": {
+                "id": "coimbatore_pontoon_book_standard",
+                "title": "Book Now",
+            },
+        },
+    }
+    configured = _settings()
+    configured.raipur_inbound_orchestrator_enabled = True
+    configured.echt_connect_enabled = True
+    service = Service()
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", lambda: service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(exotel_webhook, "SmtpLeadEmailNotifier", Notifier)
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: object())
+    monkeypatch.setattr(exotel_webhook, "OutboundDraftRepository", lambda _client: object())
+    monkeypatch.setattr(
+        exotel_webhook,
+        "create_draft_after_orchestration",
+        lambda **_kwargs: SimpleNamespace(draft_saved=False, reason_code="disabled"),
+    )
+    message = exotel_webhook.normalize_exotel_payload(action_payload)[0]
+
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+
+    assert len(sent) == 1
+    assert sent[0].action == "Book Now"
+    assert sent[0].lead_email == "mandip@example.com"
+    assert sent[0].lead_phone == "+919876543210"
+    assert sent[0].guest_count == "7"
 
 
 def test_orchestrator_dependency_graph_is_constructed_once(monkeypatch) -> None:

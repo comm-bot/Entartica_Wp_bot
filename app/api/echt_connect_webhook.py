@@ -152,7 +152,10 @@ async def process_echt_connect_background(
             # Exotel sent the interactive message and therefore owns its
             # list/button reply. Suppress a CRM mirror of the same action so
             # media, documents, booking, or handover cannot run twice.
-            if coimbatore_package_action_id(message.content) is not None:
+            if (
+                inbound.message_type.casefold() != "text"
+                and coimbatore_package_action_id(message.content) is not None
+            ):
                 logger.info(
                     "echt_connect_message_skipped reason=exotel_owns_package_action number_id=%s",
                     inbound.number_id,

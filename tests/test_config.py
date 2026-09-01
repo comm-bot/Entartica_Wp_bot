@@ -87,3 +87,9 @@ def test_cached_settings_keep_effective_flag_until_cache_is_cleared(monkeypatch)
     get_settings.cache_clear()
     assert get_settings().raipur_langgraph_enabled is True
     get_settings.cache_clear()
+
+
+def test_lead_email_notifications_are_disabled_by_default_and_recipient_is_approved():
+    settings = Settings(_env_file=None)
+    assert settings.lead_email_notifications_enabled is False
+    assert settings.lead_email_to == "hasim@echt.co.in"

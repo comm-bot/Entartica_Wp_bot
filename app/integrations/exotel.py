@@ -1020,6 +1020,12 @@ def _normalize_whatsapp_message(
     business_number = _normalize_phone(message.to)
     message_type = _message_type_from_content(message.content)
     content = _content_from_message(message.content, message_type)
+    interactive = message.content.get("interactive")
+    interactive_reply = bool(
+        message.content.get("type") == "interactive"
+        and isinstance(interactive, dict)
+        and interactive.get("type") in {"list_reply", "button_reply"}
+    )
     form_response = _parse_flow_response_json(message.content) if message_type == "flow" else None
 
     return NormalizedInboundMessage(
@@ -1037,6 +1043,7 @@ def _normalize_whatsapp_message(
         profile_name=message.profile_name,
         message_type=message_type,
         content=content,
+        interactive_reply=interactive_reply,
         form_response=form_response,
         received_at=_as_utc(message.timestamp),
     )

@@ -50,5 +50,6 @@ class NormalizedInboundMessage(BaseModel):
         "text", "flow", "other"
     ]
     content: str | None = None
+    interactive_reply: bool = False
     form_response: dict[str, Any] | None = None
     received_at: datetime

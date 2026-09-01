@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     echt_connect_enabled: bool = False
     echt_connect_numbers_json: SecretStr | None = None
     echt_connect_callback_timeout_seconds: float = 10.0
+    lead_email_notifications_enabled: bool = False
+    lead_email_to: str = "hasim@echt.co.in"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from_email: str | None = None
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: float = 10.0
     public_base_url: str | None = None
     coimbatore_customer_details_form_enabled: bool = True
     coimbatore_customer_details_form_ttl_minutes: int = 30

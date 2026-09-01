@@ -25,6 +25,7 @@ from app.services.raipur_automatic_replies import attempt_automatic_reply
 from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
 from app.services.coimbatore.customer_details import customer_details_complete
 from app.services.coimbatore.pontoon_package import action_id as coimbatore_package_action_id
+from app.integrations.lead_email import SmtpLeadEmailNotifier, lead_email_from_context
 
 
 router = APIRouter(prefix="/webhooks/exotel", tags=["exotel"])
@@ -148,7 +149,10 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
         bool(getattr(settings, "echt_connect_enabled", False))
         and message.message_type == "text"
         and customer_details_complete(result.customer)
-        and coimbatore_package_action_id(message.content) is None
+        and not (
+            message.interactive_reply
+            and coimbatore_package_action_id(message.content) is not None
+        )
     ):
                 logger.info(
                     "orchestration_skipped reason=echt_connect_owns_completed_customer_text"
@@ -168,6 +172,27 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                         conversation=result.conversation,
                         source_message_id=message.external_message_id,
                     )
+                package_action = (
+                    coimbatore_package_action_id(message.content)
+                    if message.interactive_reply else None
+                )
+                lead = lead_email_from_context(
+                    package_action or "", result.customer, getattr(orchestration, "context", None),
+                )
+                if lead is not None:
+                    try:
+                        sent = await run_in_threadpool(
+                            SmtpLeadEmailNotifier(settings).send, lead,
+                        )
+                        logger.info(
+                            "coimbatore_lead_email_completed action=%s sent=%s",
+                            package_action, sent,
+                        )
+                    except Exception as error:
+                        logger.error(
+                            "coimbatore_lead_email_failed action=%s error_category=%s",
+                            package_action, type(error).__name__,
+                        )
                 trace.event("routing_complete", duration_ms=trace.value("total_orchestration"))
                 trace.stages_ms["reply_ready"] = trace.total_ms()
                 trace.mark("reply_ready", event="reply_ready")
