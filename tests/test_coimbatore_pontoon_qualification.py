@@ -80,6 +80,19 @@ def test_guest_and_date_can_arrive_in_two_messages():
     assert completed.context.pending_field is None
 
 
+def test_pending_bare_over_capacity_guest_is_retained_for_capacity_prompt():
+    waiting = qualify("5 October", context(), today=TODAY).context
+    assert waiting.pending_field == "total_guests"
+
+    result = qualify("25", waiting, today=TODAY)
+
+    assert result.context.details.total_guests == 25
+    assert result.context.details.preferred_date == date(2026, 10, 5)
+    # The qualification result is complete; the orchestrator then detects the
+    # capacity violation and resets this to total_guests for correction.
+    assert result.context.pending_field is None
+
+
 def test_over_capacity_bare_number_can_be_corrected_without_losing_date():
     mistaken = qualify("25 people, oct 5", context(), today=TODAY)
     assert mistaken.context.details.total_guests == 25

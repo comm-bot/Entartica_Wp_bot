@@ -220,8 +220,16 @@ def _guest_count(text: str, context: ConversationContext) -> int | None:
     )
     if (context.details.total_guests is None or correcting_over_capacity) and not _DATE_RE.search(text):
         bare = re.fullmatch(r"\s*(\d{1,3})\s*", text)
-        if bare and 1 <= int(bare.group(1)) <= 10:
-            return int(bare.group(1))
+        if bare:
+            value = int(bare.group(1))
+            # While the bot is explicitly waiting for the guest count, retain
+            # an over-capacity answer so the caller can issue the capacity
+            # correction prompt. Once correcting that answer, only accept an
+            # in-capacity replacement here.
+            if context.details.total_guests is None and value > 0:
+                return value
+            if correcting_over_capacity and 1 <= value <= 10:
+                return value
     return None
 
 

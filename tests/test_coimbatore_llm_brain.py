@@ -101,6 +101,14 @@ def run(bot, text):
     return bot.process(SimpleNamespace(content=text), customer={"id":"customer"}, conversation={"id":"conversation"}, source_message_id="message")
 
 
+def run_echt(bot, text):
+    return bot.process(
+        SimpleNamespace(content=text, external_provider="echt_connect"),
+        customer={"id":"customer"}, conversation={"id":"conversation"},
+        source_message_id="message",
+    )
+
+
 def test_attribute_level_cake_duration_and_new_paraphrase_use_llm_and_rag():
     bot = service(); run(bot, "we are couple")
     cake = run(bot, "what is the flavour of cake?")
@@ -184,6 +192,32 @@ def test_live_guest_first_comma_date_captures_both_and_queues_complete_package()
     assert draft["draft_metadata"]["package_presentation_pending"] is True
     assert draft["draft_metadata"]["interactive_message"]["header_image_url"] is None
     assert "Event Date: 06 Oct 2026" in draft["draft_metadata"]["interactive_message"]["body"]
+
+
+def test_exotel_to_echt_guest_and_date_survive_orchestrator_recreation_and_send_package():
+    contexts = Contexts()
+    first_process = service(persist=False, contexts=contexts)
+    first_process._settings.echt_connect_enabled = True
+
+    # The native details Flow and its continuation arrive through Exotel.
+    welcome = run(first_process, "Hello")
+    assert "How many guests" in welcome.draft_text
+    guests = run(first_process, "3")
+    assert guests.context.details.total_guests == 3
+    assert guests.context.pending_field == "preferred_date"
+
+    # Simulate a later CRM callback being handled by a fresh application
+    # worker. The state must come from the durable conversation context.
+    later_process = service(persist=False, contexts=contexts)
+    later_process._settings.echt_connect_enabled = True
+    package = run_echt(later_process, "23/09/2026")
+
+    assert package.context.details.total_guests == 3
+    assert package.context.details.preferred_date == date(2026, 9, 23)
+    assert package.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert package.safe_metadata["package_presentation_pending"] is True
+    assert "Event Date: 23 Sep 2026" in package.draft_text
+    assert "Guests: 3" in package.draft_text
 
 
 def test_two_guests_still_auto_sends_standard_unless_couple_explicitly_requested():

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from contextvars import ContextVar
 import logging
 import re
 from typing import Any
@@ -43,6 +44,7 @@ from app.schemas.interactive_messages import customer_details_flow
 
 
 logger = logging.getLogger("uvicorn.error")
+_inbound_provider: ContextVar[str] = ContextVar("coimbatore_inbound_provider", default="exotel")
 
 
 class CoimbatoreInboundOrchestrator:
@@ -75,17 +77,23 @@ class CoimbatoreInboundOrchestrator:
         source_message_id: str,
         current_state: Any = None,
     ):
-        graph = getattr(self, "_langgraph", None)
-        enabled = bool(getattr(self._settings, "coimbatore_langgraph_enabled", False))
-        if enabled and graph is not None:
-            return graph.invoke(
-                message=message, customer=customer, conversation=conversation,
+        provider_token = _inbound_provider.set(
+            str(getattr(message, "external_provider", "exotel") or "exotel")
+        )
+        try:
+            graph = getattr(self, "_langgraph", None)
+            enabled = bool(getattr(self._settings, "coimbatore_langgraph_enabled", False))
+            if enabled and graph is not None:
+                return graph.invoke(
+                    message=message, customer=customer, conversation=conversation,
+                    source_message_id=source_message_id, current_state=current_state,
+                )
+            return self._process_turn(
+                message, customer=customer, conversation=conversation,
                 source_message_id=source_message_id, current_state=current_state,
             )
-        return self._process_turn(
-            message, customer=customer, conversation=conversation,
-            source_message_id=source_message_id, current_state=current_state,
-        )
+        finally:
+            _inbound_provider.reset(provider_token)
 
     def _process_turn(
         self,
@@ -171,7 +179,14 @@ class CoimbatoreInboundOrchestrator:
                         "interactive_message_type":"flow"} if interactive_metadata else {})},
             )
             return self._finalize(result, customer_id, conversation_id, True, source_message_id)
-        persistent = self._sales_state_is_persistent()
+        # CRM/ECHT requests are separate HTTP callbacks and must not depend on
+        # one Uvicorn process retaining in-memory session state between turns.
+        # Persist their qualification progress so a guest answer followed by a
+        # date always resumes the same journey and presents the package.
+        persistent = (
+            self._sales_state_is_persistent()
+            or getattr(message, "external_provider", "exotel") == "echt_connect"
+        )
         state_key = self._session_state_key(customer_id, conversation_id)
         content = getattr(message, "content", "")
         if not persistent and _is_development_reset(content):
@@ -540,7 +555,11 @@ class CoimbatoreInboundOrchestrator:
     def _sales_state_is_persistent(self) -> bool:
         # Default true for lightweight legacy test doubles; real Settings defaults
         # to session mode until production persistence is deliberately re-enabled.
-        return bool(getattr(self._settings, "coimbatore_persist_sales_state", True))
+        return (
+            _inbound_provider.get() == "echt_connect"
+            or bool(getattr(self._settings, "echt_connect_enabled", False))
+            or bool(getattr(self._settings, "coimbatore_persist_sales_state", True))
+        )
 
     def _text_only_package_mode(self) -> bool:
         return not bool(getattr(self._settings, "coimbatore_package_media_enabled", True))
