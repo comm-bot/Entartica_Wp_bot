@@ -141,8 +141,8 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                 return
     # When CRM/ECHT owns this number, Exotel remains responsible only for the
     # native customer-details Flow. After details are complete, normal text is
-    # answered through the CRM callback so the customer never receives two bot
-    # replies for the same WhatsApp message.
+    # orchestrated from the ECHT inbound event and sent once through the durable
+    # Exotel draft pipeline, so this copy must never create a second reply.
     if (
         bool(getattr(settings, "echt_connect_enabled", False))
         and message.message_type == "text"

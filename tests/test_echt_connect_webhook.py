@@ -107,7 +107,7 @@ def test_disabled_integration_fails_closed(monkeypatch):
     assert response.status_code == 503
 
 
-def test_background_uses_crm_callback_and_never_exotel(monkeypatch):
+def test_handover_sends_bot_reply_via_exotel_then_notifies_crm_without_duplicate_reply(monkeypatch):
     inbound_row = {"id": "internal-inbound"}
     persisted = InboundMessageResult(
         duplicate=False,
@@ -115,7 +115,7 @@ def test_background_uses_crm_callback_and_never_exotel(monkeypatch):
         conversation={"id": "internal-conversation"},
         inbound_message=inbound_row,
     )
-    seen = {"messages": [], "callbacks": []}
+    seen = {"messages": [], "callbacks": [], "exotel": []}
 
     class Service:
         def process(self, message):
@@ -138,28 +138,185 @@ def test_background_uses_crm_callback_and_never_exotel(monkeypatch):
         async def send_reply(self, credentials, reply):
             seen["callbacks"].append((credentials, reply))
 
+    async def send_via_exotel(**kwargs):
+        seen["exotel"].append(kwargs)
+        return True
+
     monkeypatch.setattr(echt_connect_webhook, "get_inbound_message_service", Service)
     monkeypatch.setattr(echt_connect_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
     monkeypatch.setattr(echt_connect_webhook, "EchtConnectClient", CallbackClient)
+    monkeypatch.setattr(echt_connect_webhook, "send_echt_orchestration_via_exotel", send_via_exotel)
     credentials = EchtConnectNumberCredentials(
         NUMBER_ID, "webhook-test-secret", "callback-test-key", CALLBACK_URL, "+917948502801"
     )
-    inbound = echt_connect_webhook.EchtConnectInbound.model_validate(payload())
+    active_payload = payload()
+    active_payload["mode"] = "active"
+    inbound = echt_connect_webhook.EchtConnectInbound.model_validate(active_payload)
 
     import asyncio
     asyncio.run(echt_connect_webhook.process_echt_connect_background(inbound, credentials, settings()))
 
     assert seen["messages"][0].external_provider == "echt_connect"
     assert seen["messages"][0].business_whatsapp_number == "+917948502801"
+    assert len(seen["exotel"]) == 1
     assert len(seen["callbacks"]) == 1
     callback = seen["callbacks"][0][1].model_dump(by_alias=True, exclude_none=True)
     assert callback == {
         "conversationId": "crm-conversation-1",
         "inReplyToMessageId": "crm-message-1",
-        "reply": "Approved chatbot reply",
         "handover": True,
         "handoverReason": "customer_requested_human",
     }
+
+
+def test_normal_bot_reply_uses_exotel_and_does_not_call_crm_reply(monkeypatch):
+    persisted = InboundMessageResult(
+        duplicate=False,
+        customer={"id": "internal-customer", "name": "Test Customer", "email": "test@example.com"},
+        conversation={"id": "internal-conversation"},
+        inbound_message={"id": "internal-inbound"},
+    )
+    seen = {"exotel": [], "callbacks": []}
+
+    class Service:
+        def process(self, _message):
+            return persisted
+
+    class Orchestrator:
+        def process(self, _message, **_kwargs):
+            return SimpleNamespace(
+                draft_text="Approved package with actions",
+                human_handover_required=False,
+                reason_code="coimbatore_standard_package",
+                response_valid=True,
+                safe_metadata={
+                    "interactive_message": {
+                        "kind": "list", "button_label": "Package Actions",
+                        "options": [{"id": "book_now", "title": "Book Now"}],
+                    }
+                },
+            )
+
+    class CallbackClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def send_reply(self, *_args):
+            seen["callbacks"].append(True)
+
+    async def send_via_exotel(**kwargs):
+        seen["exotel"].append(kwargs["orchestration"].safe_metadata["interactive_message"])
+        return True
+
+    monkeypatch.setattr(echt_connect_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(echt_connect_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(echt_connect_webhook, "EchtConnectClient", CallbackClient)
+    monkeypatch.setattr(echt_connect_webhook, "send_echt_orchestration_via_exotel", send_via_exotel)
+    credentials = EchtConnectNumberCredentials(
+        NUMBER_ID, "webhook-test-secret", "callback-test-key", CALLBACK_URL, "+917948502801"
+    )
+    active_payload = payload()
+    active_payload["mode"] = "active"
+    inbound = echt_connect_webhook.EchtConnectInbound.model_validate(active_payload)
+
+    import asyncio
+    asyncio.run(echt_connect_webhook.process_echt_connect_background(inbound, credentials, settings()))
+
+    assert len(seen["exotel"]) == 1
+    assert seen["exotel"][0]["options"][0] == {"id": "book_now", "title": "Book Now"}
+    assert seen["callbacks"] == []
+
+
+def test_shadow_mode_never_sends_exotel_or_handover_callback(monkeypatch):
+    persisted = InboundMessageResult(
+        duplicate=False,
+        customer={"id": "internal-customer", "name": "Test Customer", "email": "test@example.com"},
+        conversation={"id": "internal-conversation"},
+        inbound_message={"id": "internal-inbound"},
+    )
+    seen = {"exotel": False, "callback": False}
+
+    class Service:
+        def process(self, _message):
+            return persisted
+
+    class Orchestrator:
+        def process(self, _message, **_kwargs):
+            return SimpleNamespace(
+                draft_text="Would otherwise be delivered",
+                human_handover_required=True,
+                reason_code="customer_requested_human",
+            )
+
+    class CallbackClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def send_reply(self, *_args):
+            seen["callback"] = True
+
+    async def send_via_exotel(**_kwargs):
+        seen["exotel"] = True
+        return True
+
+    monkeypatch.setattr(echt_connect_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(echt_connect_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(echt_connect_webhook, "EchtConnectClient", CallbackClient)
+    monkeypatch.setattr(echt_connect_webhook, "send_echt_orchestration_via_exotel", send_via_exotel)
+    credentials = EchtConnectNumberCredentials(
+        NUMBER_ID, "webhook-test-secret", "callback-test-key", CALLBACK_URL, "+917948502801"
+    )
+
+    import asyncio
+    asyncio.run(echt_connect_webhook.process_echt_connect_background(
+        echt_connect_webhook.EchtConnectInbound.model_validate(payload()),
+        credentials,
+        settings(),
+    ))
+
+    assert seen == {"exotel": False, "callback": False}
+
+
+def test_duplicate_echt_message_never_sends_exotel_or_callback(monkeypatch):
+    seen = {"orchestrated": False, "exotel": False, "callback": False}
+
+    class Service:
+        def process(self, _message):
+            return InboundMessageResult(duplicate=True)
+
+    class Orchestrator:
+        def process(self, *_args, **_kwargs):
+            seen["orchestrated"] = True
+
+    class CallbackClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def send_reply(self, *_args):
+            seen["callback"] = True
+
+    async def send_via_exotel(**_kwargs):
+        seen["exotel"] = True
+        return True
+
+    monkeypatch.setattr(echt_connect_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(echt_connect_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(echt_connect_webhook, "EchtConnectClient", CallbackClient)
+    monkeypatch.setattr(echt_connect_webhook, "send_echt_orchestration_via_exotel", send_via_exotel)
+    active_payload = payload()
+    active_payload["mode"] = "active"
+    credentials = EchtConnectNumberCredentials(
+        NUMBER_ID, "webhook-test-secret", "callback-test-key", CALLBACK_URL, "+917948502801"
+    )
+
+    import asyncio
+    asyncio.run(echt_connect_webhook.process_echt_connect_background(
+        echt_connect_webhook.EchtConnectInbound.model_validate(active_payload),
+        credentials,
+        settings(),
+    ))
+
+    assert seen == {"orchestrated": False, "exotel": False, "callback": False}
 
 
 def test_incomplete_customer_is_persisted_but_crm_reply_is_suppressed(monkeypatch):
