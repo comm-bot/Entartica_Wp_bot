@@ -312,7 +312,17 @@ class CoimbatoreInboundOrchestrator:
             and not has_qualification_update(content, active)
             and (_is_greeting(content) or _is_unexpected_qualification_input(content))
         ):
-            if active.details.total_guests is None:
+            if (
+                active.details.total_guests is None
+                and active.details.preferred_date is None
+            ):
+                recovery = _text_entry_result(
+                    "Please share your celebration date and number of guests 😊\n\n"
+                    "💡 Example: 15 Sept, 4 people",
+                    replace(active, pending_field="total_guests"),
+                    "coimbatore_qualification_combined_recovery",
+                )
+            elif active.details.total_guests is None:
                 recovery = _text_entry_result(
                     "How many guests will be joining? 👥",
                     replace(active, pending_field="total_guests"),

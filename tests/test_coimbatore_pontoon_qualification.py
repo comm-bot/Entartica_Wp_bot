@@ -69,6 +69,18 @@ def test_guest_then_month_first_date_formats_extract_both_fields():
         assert result.context.pending_field is None
 
 
+def test_natural_combined_date_and_guest_response_extracts_both_exactly():
+    for message in (
+        "15 Sept, 4 people",
+        "4 people, 15 Sept",
+        "15 sept and 4 guests",
+    ):
+        result = qualify(message, context(), today=TODAY)
+        assert result.context.details.total_guests == 4
+        assert result.context.details.preferred_date == date(2026, 9, 15)
+        assert result.context.pending_field is None
+
+
 def test_guest_and_date_can_arrive_in_two_messages():
     guests = qualify("8", replace(context(), pending_field="total_guests"), today=TODAY)
     assert guests.context.details.total_guests == 8

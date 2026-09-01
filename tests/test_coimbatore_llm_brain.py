@@ -226,7 +226,10 @@ def test_unexpected_reply_then_guest_past_date_and_future_date_sends_package():
     assert welcome.context.pending_field == "total_guests"
 
     unexpected = run(bot, "???")
-    assert unexpected.draft_text == "How many guests will be joining? 👥"
+    assert unexpected.draft_text == (
+        "Please share your celebration date and number of guests 😊\n\n"
+        "💡 Example: 15 Sept, 4 people"
+    )
     assert unexpected.context.pending_field == "total_guests"
 
     guests = run(bot, "7")
