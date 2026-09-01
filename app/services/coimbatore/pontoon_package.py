@@ -516,7 +516,8 @@ def handle_action(
         text = f"Here are the approved {package_label} photos and videos 😊"
         metadata["media_sequence"] = [
             {"type": str(item["type"]), "url": str(item["url"]),
-             "caption": f"{package_label} photo" if item["type"] == "image" else f"{package_label} video"}
+             "caption": "Pontoon Boat Celebration" if active_package == COUPLE_PACKAGE_ID
+             else (f"{package_label} photo" if item["type"] == "image" else f"{package_label} video")}
             for item in sequence
         ]
         metadata.update({

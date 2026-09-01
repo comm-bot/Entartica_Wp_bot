@@ -307,7 +307,7 @@ def test_standard_package_can_open_couple_package_in_same_interactive_layout():
 
 def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
     service, _contexts = orchestrator()
-    offered = run(service, "30 August, 5 people")
+    offered = run(service, "30 September, 5 people")
     confirm_package(service, offered)
     couple = run(service, "coimbatore_pontoon_check_couple")
     assert couple.context.form_values["active_package_id"] == "coimbatore_pontoon_couple_romance"
@@ -319,22 +319,22 @@ def test_couple_photo_action_sends_basic_decor_photo_and_video_only():
         {
             "type": "image",
             "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_coimbatore_basic_decor.jpeg",
-            "caption": "Couple Romance photo",
+            "caption": "Pontoon Boat Celebration",
         },
         {
             "type": "image",
             "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/Pbc_Coi_couple_package.jpeg",
-            "caption": "Couple Romance photo",
+            "caption": "Pontoon Boat Celebration",
         },
         {
             "type": "video",
             "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_coimbatore.mp4",
-            "caption": "Couple Romance video",
+            "caption": "Pontoon Boat Celebration",
         },
         {
             "type": "video",
             "url": "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/pontoon_boat_celebration_video_2.mp4",
-            "caption": "Couple Romance video",
+            "caption": "Pontoon Boat Celebration",
         },
     ]
     assert media.safe_metadata["package_id"] == "coimbatore_pontoon_couple_romance"
