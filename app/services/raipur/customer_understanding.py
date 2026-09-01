@@ -163,6 +163,7 @@ def parse_planned_date_text(value: str | None, today: date | None = None) -> dat
     if not isinstance(value, str) or not value.strip():
         return None
     text = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", value.strip().rstrip(".!"), flags=re.I)
+    text = re.sub(r"\bsept\b", "sep", text, flags=re.I)
     reference = today or date.today()
     lowered = text.casefold()
     if lowered == "tomorrow":
@@ -204,7 +205,7 @@ def deterministic_celebration_understanding(message: object) -> CustomerUndersta
     )
     guest_count = int(next(group for group in guest_match.groups() if group)) if guest_match else None
     date_match = re.search(
-        r"\b(today|tomorrow|\d{1,2}(?:st|nd|rd|th)?(?:/\d{1,2}(?:/\d{2,4})?|\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?))\b",
+        r"\b(today|tomorrow|\d{1,2}(?:st|nd|rd|th)?(?:/\d{1,2}(?:/\d{2,4})?|\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?))\b",
         text, re.I,
     )
     planned_text = date_match.group(1) if date_match else None

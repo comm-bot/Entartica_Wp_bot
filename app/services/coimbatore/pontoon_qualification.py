@@ -20,7 +20,7 @@ How many guests will be visiting, and what date are you planning for?
 
 💡 eg. 7 , 26/08/2026"""
 
-_MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
 _DATE_RE = re.compile(
     rf"\b(today|tomorrow|(?:this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
     rf"\d{{1,2}}(?:st|nd|rd|th)?(?:/\d{{1,2}}(?:/\d{{2,4}})?|-\d{{1,2}}-\d{{2,4}}|\s+{_MONTH}(?:\s+\d{{4}})?)|"

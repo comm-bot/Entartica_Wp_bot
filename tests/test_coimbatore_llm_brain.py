@@ -122,8 +122,8 @@ def test_fresh_package_interest_gets_full_welcome_then_auto_standard_draft():
         "💡 eg. 7 , 26/08/2026"
     )
     assert welcome.context.pending_field == "total_guests"
-    package = run(bot, "30/08/2026,6")
-    assert package.context.details.preferred_date == date(2026, 8, 30)
+    package = run(bot, "05/10/2026,6")
+    assert package.context.details.preferred_date == date(2026, 10, 5)
     assert package.context.details.total_guests == 6
     assert package.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     assert package.safe_metadata["package_presentation_pending"] is True
@@ -155,16 +155,16 @@ def test_live_guest_first_comma_date_captures_both_and_queues_complete_package()
     bot = service()
     welcome = run(bot, "hello")
     assert welcome.context.form_values["qualification_missing_fields"] == ["preferred_date", "total_guests"]
-    result = run(bot, "5 , 23/08/2026")
+    result = run(bot, "5 , 06/10/2026")
     assert result.context.details.total_guests == 5
-    assert result.context.details.preferred_date == date(2026, 8, 23)
+    assert result.context.details.preferred_date == date(2026, 10, 6)
     assert result.context.form_values["qualification_missing_fields"] == []
     assert "How many guests" not in result.draft_text
     assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     assert result.safe_metadata["package_presentation_pending"] is True
     assert result.context.form_values.get("standard_package_presented") is not True
     assert all(value in result.draft_text for value in (
-        "Event Date: 23 Aug 2026", "Guests: 5", "~₹5,999/-~",
+        "Event Date: 06 Oct 2026", "Guests: 5", "~₹5,999/-~",
         "₹5,100/- (15% OFF)",
         "30 Minutes Premium Boat Ride",
     ))
@@ -183,12 +183,12 @@ def test_live_guest_first_comma_date_captures_both_and_queues_complete_package()
     assert draft["draft_metadata"]["package_id"] == "coimbatore_pontoon_standard"
     assert draft["draft_metadata"]["package_presentation_pending"] is True
     assert draft["draft_metadata"]["interactive_message"]["header_image_url"] is None
-    assert "Event Date: 23 Aug 2026" in draft["draft_metadata"]["interactive_message"]["body"]
+    assert "Event Date: 06 Oct 2026" in draft["draft_metadata"]["interactive_message"]["body"]
 
 
 def test_two_guests_still_auto_sends_standard_unless_couple_explicitly_requested():
     bot = service()
-    automatic = run(bot, "30/08/2026,2")
+    automatic = run(bot, "05/10/2026,2")
     assert automatic.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     explicit = run(bot, "couple package")
     assert explicit.safe_metadata["package_id"] == "coimbatore_pontoon_couple_romance"
@@ -228,7 +228,7 @@ def test_explicit_standard_package_is_canonical_media_buttons_dynamic_and_resend
 
 
 def test_standard_package_presented_commits_only_after_acceptance_callback():
-    bot = service(); run(bot, "hello"); result = run(bot, "30/08/2026,5")
+    bot = service(); run(bot, "hello"); result = run(bot, "05/10/2026,5")
     assert result.context.form_values["package_presentation_pending"] is True
     assert result.context.form_values.get("standard_package_presented") is not True
     assert bot.confirm_standard_package_presented(result, "customer", "conversation") is True
@@ -251,11 +251,11 @@ def test_multifield_past_date_preserves_guest_and_asks_only_for_date():
 
 def test_pending_numeric_guest_above_ten_requests_in_capacity_correction():
     bot = service()
-    partial = run(bot, "30 August")
+    partial = run(bot, "5 October")
     assert partial.context.pending_field == "total_guests"
     result = run(bot, "25")
     assert result.context.details.total_guests == 25
-    assert result.context.details.preferred_date == date(2026, 8, 30)
+    assert result.context.details.preferred_date == date(2026, 10, 5)
     assert "maximum capacity" in result.draft_text
     assert "10 guests" in result.draft_text
     assert result.context.pending_field == "total_guests"
@@ -265,7 +265,7 @@ def test_pending_numeric_guest_above_ten_requests_in_capacity_correction():
 def test_pending_guest_words_and_phrases_bypass_llm_and_rag():
     for reply in ("6", "25", "six", "we are 6"):
         bot = service()
-        partial = run(bot, "30 August")
+        partial = run(bot, "5 October")
         calls_before = len(bot._knowledge.calls)
         result = run(bot, reply)
         expected = 6 if reply != "25" else 25
@@ -307,10 +307,10 @@ def test_active_package_context_controls_duration_and_vague_resend():
 
 
 def test_multifield_valid_formats_complete_and_send_exact_standard_package():
-    for message in ("30/08/2026,5", "30-08-2026 5", "August 30 for 5 people"):
+    for message in ("05/10/2026,5", "05-10-2026 5", "October 5 for 5 people"):
         bot = service()
         result = run(bot, message)
-        assert result.context.details.preferred_date == date(2026, 8, 30)
+        assert result.context.details.preferred_date == date(2026, 10, 5)
         assert result.context.details.total_guests == 5
         assert result.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
         assert result.safe_metadata["response_composer"] == "exact_kb_package_block"
@@ -444,7 +444,7 @@ def test_session_mode_ignores_stale_supabase_and_keeps_guest_date_in_process():
     contexts = Contexts()
     persistent = service(contexts=contexts)
     run(persistent, "hello")
-    qualified = run(persistent, "5, 23/08/2026")
+    qualified = run(persistent, "5, 06/10/2026")
     booked = run(persistent, "Book Now")
     contexts.record = {
         **contexts.record,
@@ -461,9 +461,9 @@ def test_session_mode_ignores_stale_supabase_and_keeps_guest_date_in_process():
     partial = run(bot, "5")
     assert partial.context.details.total_guests == 5
     assert partial.context.details.preferred_date is None
-    package = run(bot, "23/08/2026")
+    package = run(bot, "06/10/2026")
     assert package.context.details.total_guests == 5
-    assert package.context.details.preferred_date == date(2026, 8, 23)
+    assert package.context.details.preferred_date == date(2026, 10, 6)
     assert package.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     assert contexts.saves == 3
 
@@ -471,7 +471,7 @@ def test_session_mode_ignores_stale_supabase_and_keeps_guest_date_in_process():
 def test_session_restart_reset_after_book_now_payment_link():
     contexts = Contexts()
     bot = service(persist=False, contexts=contexts)
-    run(bot, "5, 23/08/2026")
+    run(bot, "5, 06/10/2026")
     interested = run(bot, "Book Now")
     assert interested.context.pending_field is None
     assert interested.context.sales_stage == SalesStage.PAYMENT_PENDING
@@ -498,7 +498,7 @@ def test_persistent_mode_still_restores_durable_sales_state():
     partial = run(first, "5")
     assert partial.context.details.total_guests == 5
     restarted = service(persist=True, contexts=contexts)
-    restored = run(restarted, "23/08/2026")
+    restored = run(restarted, "06/10/2026")
     assert restored.context.details.total_guests == 5
     assert restored.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
 
@@ -507,9 +507,9 @@ def test_live_like_standard_package_sends_one_text_message_with_all_actions():
     bot = service(persist=False)
     welcome = run(bot, "hello")
     assert "How many guests" in welcome.draft_text
-    package = run(bot, "5 , 22/08/2026")
+    package = run(bot, "5 , 07/10/2026")
     assert package.context.details.total_guests == 5
-    assert package.context.details.preferred_date == date(2026, 8, 22)
+    assert package.context.details.preferred_date == date(2026, 10, 7)
 
     repository = FakeOutboundDraftRepository()
     created = create_draft_after_orchestration(
@@ -564,7 +564,7 @@ def test_live_like_standard_package_sends_one_text_message_with_all_actions():
     interactive = message["content"]["interactive"]
     assert "header" not in interactive
     assert all(value in interactive["body"]["text"] for value in (
-        "Event Date: 22 Aug 2026", "Guests: 5", "Red Carpet Welcome",
+        "Event Date: 07 Oct 2026", "Guests: 5", "Red Carpet Welcome",
             "~₹5,999/-~", "₹5,100/- (15% OFF)",
     ))
     rows = interactive["action"]["sections"][0]["rows"]
@@ -582,14 +582,14 @@ def test_live_like_standard_package_sends_one_text_message_with_all_actions():
 
 def test_standard_package_brochure_action_uses_durable_document_send_path():
     bot = service(persist=False)
-    run(bot, "5 , 25/08/2026")
+    run(bot, "5 , 08/10/2026")
     brochure = run(bot, "See Pontoon Brochure")
     expected_url = (
         "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/"
         "Pontoon_Celebration_Brochure.pdf"
     )
     assert brochure.context.details.total_guests == 5
-    assert brochure.context.details.preferred_date == date(2026, 8, 25)
+    assert brochure.context.details.preferred_date == date(2026, 10, 8)
     assert brochure.context.form_values["active_package_id"] == "coimbatore_pontoon_standard"
     assert brochure.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     assert brochure.safe_metadata["document_message"] == {
