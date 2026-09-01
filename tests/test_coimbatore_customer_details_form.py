@@ -242,6 +242,7 @@ def test_native_whatsapp_flow_submission_persists_details_and_returns_named_qual
     assert result.reason_code == "coimbatore_customer_details_completed"
     assert result.draft_text.startswith("Thanks Rahul! 👋") and "How many guests" in result.draft_text
     assert result.context.details.customer_name == "Rahul Sharma"
+    assert result.context.pending_field == "total_guests"
     assert db.data["customers"][0]["email"] == "rahul@example.com"
 
 
@@ -273,10 +274,10 @@ def test_completed_customer_continues_existing_guest_date_and_book_now_without_i
     customer = {"id":"customer-1", "whatsapp_number":"+919876543210",
                 "name":"Rahul Sharma", "email":"rahul@example.com"}
     conversation = {"id":"conversation-1"}
-    package = bot.process(SimpleNamespace(content="7, 26/08/2026"), customer=customer,
+    package = bot.process(SimpleNamespace(content="7, 26/10/2026"), customer=customer,
                           conversation=conversation, source_message_id="message-1")
     assert package.context.details.total_guests == 7
-    assert package.context.details.preferred_date.isoformat() == "2026-08-26"
+    assert package.context.details.preferred_date.isoformat() == "2026-10-26"
     assert package.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     bot.confirm_standard_package_presented(package, "customer-1", "conversation-1")
     booking = bot.process(SimpleNamespace(content="Book Now"), customer=customer,

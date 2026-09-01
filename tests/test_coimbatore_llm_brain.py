@@ -220,6 +220,31 @@ def test_exotel_to_echt_guest_and_date_survive_orchestrator_recreation_and_send_
     assert "Guests: 3" in package.draft_text
 
 
+def test_unexpected_reply_then_guest_past_date_and_future_date_sends_package():
+    bot = service()
+    welcome = run(bot, "Hello")
+    assert welcome.context.pending_field == "total_guests"
+
+    unexpected = run(bot, "???")
+    assert unexpected.draft_text == "How many guests will be joining? 👥"
+    assert unexpected.context.pending_field == "total_guests"
+
+    guests = run(bot, "7")
+    assert guests.draft_text == "Please share your celebration date 📅"
+    assert guests.context.pending_field == "preferred_date"
+
+    past = run(bot, "01/01/2026")
+    assert "has already passed" in past.draft_text
+    assert "future date" in past.draft_text
+    assert past.context.details.total_guests == 7
+    assert past.context.pending_field == "preferred_date"
+
+    package = run(bot, "31/12/2026")
+    assert package.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
+    assert "Event Date: 31 Dec 2026" in package.draft_text
+    assert "Guests: 7" in package.draft_text
+
+
 def test_two_guests_still_auto_sends_standard_unless_couple_explicitly_requested():
     bot = service()
     automatic = run(bot, "05/10/2026,2")

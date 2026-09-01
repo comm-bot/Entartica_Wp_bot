@@ -142,7 +142,7 @@ class CustomerDetailsFormService:
             "service_code": "pontoon_celebration", "service_name": "Pontoon Boat Celebration",
             "active_journey": "pontoon_qualification", "active_form": "customer_details",
             "form_status": "completed", "form_values": values, "booking_details": details,
-            "pending_field": "preferred_date", "updated_at": datetime.now(UTC).isoformat(),
+            "pending_field": "total_guests", "updated_at": datetime.now(UTC).isoformat(),
         })
         if not self._conversations.save_service_context(conversation_id, customer_id, context):
             return DetailsSubmission(False, "persistence_failed")

@@ -132,7 +132,7 @@ class CoimbatoreInboundOrchestrator:
                     context = replace(
                         context, details=replace(context.details, customer_name=name),
                         active_form="customer_details", form_status="completed",
-                        form_values=values, pending_field="preferred_date",
+                        form_values=values, pending_field="total_guests",
                     )
                     result = ConversationResult(
                         action="answer_information",
@@ -305,6 +305,24 @@ class CoimbatoreInboundOrchestrator:
             package_context = replace(package_context, form_values=values)
             result = self._package_result(package_context, requested_package)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        if (
+            active.pending_field in {"preferred_date", "total_guests"}
+            and not has_qualification_update(content, active)
+            and (_is_greeting(content) or _is_unexpected_qualification_input(content))
+        ):
+            if active.details.total_guests is None:
+                recovery = _text_entry_result(
+                    "How many guests will be joining? 👥",
+                    replace(active, pending_field="total_guests"),
+                    "coimbatore_qualification_guest_recovery",
+                )
+            else:
+                recovery = _text_entry_result(
+                    "Please share your celebration date 📅",
+                    replace(active, pending_field="preferred_date"),
+                    "coimbatore_qualification_date_recovery",
+                )
+            return self._finalize(recovery, customer_id, conversation_id, fresh, source_message_id)
         if active.sales_stage == SalesStage.INTERESTED:
             result = _collect_booking_details(content, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
@@ -992,6 +1010,11 @@ class CoimbatoreInboundOrchestrator:
 
 def _is_greeting(text: object) -> bool:
     return isinstance(text, str) and bool(re.fullmatch(r"\s*(?:hi+|hello+|hey+)\s*[!.?]*\s*", text, re.I))
+
+
+def _is_unexpected_qualification_input(text: object) -> bool:
+    """Recognize empty/punctuation-only replies while qualification is active."""
+    return not isinstance(text, str) or not text.strip() or not re.search(r"[A-Za-z0-9]", text)
 
 
 def _is_coimbatore_location_question(text: object) -> bool:
