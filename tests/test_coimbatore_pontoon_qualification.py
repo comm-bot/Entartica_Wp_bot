@@ -58,6 +58,36 @@ def test_combined_date_and_guests_accepts_comma_or_period_separator():
         assert result.draft_text == "Great 🎉 I have your celebration date and number of guests."
 
 
+def test_guest_then_month_first_date_formats_extract_both_fields():
+    for message, guests, planned in (
+        ("8 , oct 5", 8, date(2026, 10, 5)),
+        ("9 , sept 6", 9, date(2026, 9, 6)),
+    ):
+        result = qualify(message, context(), today=TODAY)
+        assert result.context.details.total_guests == guests
+        assert result.context.details.preferred_date == planned
+        assert result.context.pending_field is None
+
+
+def test_guest_and_date_can_arrive_in_two_messages():
+    guests = qualify("8", replace(context(), pending_field="total_guests"), today=TODAY)
+    assert guests.context.details.total_guests == 8
+    assert guests.context.pending_field == "preferred_date"
+
+    completed = qualify("oct 5", guests.context, today=TODAY)
+    assert completed.context.details.total_guests == 8
+    assert completed.context.details.preferred_date == date(2026, 10, 5)
+    assert completed.context.pending_field is None
+
+
+def test_over_capacity_bare_number_can_be_corrected_without_losing_date():
+    mistaken = qualify("25 people, oct 5", context(), today=TODAY)
+    assert mistaken.context.details.total_guests == 25
+    corrected = qualify("8", mistaken.context, today=TODAY)
+    assert corrected.context.details.total_guests == 8
+    assert corrected.context.details.preferred_date == date(2026, 10, 5)
+
+
 def test_date_only_asks_only_guests():
     result = qualify("25 August", context(), today=TODAY)
     assert result.context.details.preferred_date == date(2026, 8, 25)

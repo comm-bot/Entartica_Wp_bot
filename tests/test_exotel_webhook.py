@@ -217,6 +217,35 @@ def test_duplicate_background_processing_skips_orchestration(monkeypatch) -> Non
     assert service.calls == 2 and orchestrator.calls == 1
 
 
+def test_echt_enabled_makes_exotel_skip_completed_customer_text(monkeypatch) -> None:
+    class Service:
+        def process(self, _message):
+            return InboundMessageResult(
+                False,
+                {"id": "customer", "name": "Test Customer", "email": "test@example.com"},
+                {"id": "conversation"},
+                {"id": "inbound"},
+            )
+
+    class Orchestrator:
+        calls = 0
+
+        def process(self, *_args, **_kwargs):
+            self.calls += 1
+
+    orchestrator = Orchestrator()
+    configured = _settings()
+    configured.raipur_inbound_orchestrator_enabled = True
+    configured.echt_connect_enabled = True
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", lambda: orchestrator)
+    message = exotel_webhook.normalize_exotel_payload(_payload())[0]
+
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+
+    assert orchestrator.calls == 0
+
+
 def test_orchestrator_dependency_graph_is_constructed_once(monkeypatch) -> None:
     calls = []
     client, settings = object(), object()

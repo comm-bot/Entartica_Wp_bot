@@ -111,7 +111,7 @@ def test_background_uses_crm_callback_and_never_exotel(monkeypatch):
     inbound_row = {"id": "internal-inbound"}
     persisted = InboundMessageResult(
         duplicate=False,
-        customer={"id": "internal-customer", "name": "Test Customer"},
+        customer={"id": "internal-customer", "name": "Test Customer", "email": "test@example.com"},
         conversation={"id": "internal-conversation"},
         inbound_message=inbound_row,
     )
@@ -160,6 +160,44 @@ def test_background_uses_crm_callback_and_never_exotel(monkeypatch):
         "handover": True,
         "handoverReason": "customer_requested_human",
     }
+
+
+def test_incomplete_customer_is_persisted_but_crm_reply_is_suppressed(monkeypatch):
+    persisted = InboundMessageResult(
+        duplicate=False,
+        customer={"id": "internal-customer", "name": "Test Customer", "details_completed_at": None},
+        conversation={"id": "internal-conversation"},
+        inbound_message={"id": "internal-inbound"},
+    )
+    seen = {"orchestrated": False, "callback": False}
+
+    class Service:
+        def process(self, _message):
+            return persisted
+
+    class Orchestrator:
+        def process(self, *_args, **_kwargs):
+            seen["orchestrated"] = True
+
+    class CallbackClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def send_reply(self, *_args):
+            seen["callback"] = True
+
+    monkeypatch.setattr(echt_connect_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(echt_connect_webhook, "get_raipur_inbound_orchestrator", Orchestrator)
+    monkeypatch.setattr(echt_connect_webhook, "EchtConnectClient", CallbackClient)
+    credentials = EchtConnectNumberCredentials(
+        NUMBER_ID, "webhook-test-secret", "callback-test-key", CALLBACK_URL, "+917948502801"
+    )
+    inbound = echt_connect_webhook.EchtConnectInbound.model_validate(payload())
+
+    import asyncio
+    asyncio.run(echt_connect_webhook.process_echt_connect_background(inbound, credentials, settings()))
+
+    assert seen == {"orchestrated": False, "callback": False}
 
 
 def test_callback_uses_bearer_key_and_exact_contract():

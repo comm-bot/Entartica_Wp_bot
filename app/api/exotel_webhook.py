@@ -23,6 +23,7 @@ from app.repositories.outbound_drafts import OutboundDraftRepository
 from app.services.raipur_draft_integration import create_draft_after_orchestration
 from app.services.raipur_automatic_replies import attempt_automatic_reply
 from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
+from app.services.coimbatore.customer_details import customer_details_complete
 
 
 router = APIRouter(prefix="/webhooks/exotel", tags=["exotel"])
@@ -137,6 +138,19 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
                 return
     if message.message_type not in {"text", "flow"} or result.customer is None or result.conversation is None:
                 logger.info("orchestration_skipped reason=unsupported_inbound_type")
+                return
+    # When CRM/ECHT owns this number, Exotel remains responsible only for the
+    # native customer-details Flow. After details are complete, normal text is
+    # answered through the CRM callback so the customer never receives two bot
+    # replies for the same WhatsApp message.
+    if (
+        bool(getattr(settings, "echt_connect_enabled", False))
+        and message.message_type == "text"
+        and customer_details_complete(result.customer)
+    ):
+                logger.info(
+                    "orchestration_skipped reason=echt_connect_owns_completed_customer_text"
+                )
                 return
 
     try:

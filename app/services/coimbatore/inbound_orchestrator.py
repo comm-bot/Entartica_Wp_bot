@@ -772,9 +772,38 @@ class CoimbatoreInboundOrchestrator:
         if package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}: raise ValueError("package_selection_required")
         pricing = resolve_standard_package_pricing(context.details.total_guests) if package_id == STANDARD_PACKAGE_ID else None
         if package_id == STANDARD_PACKAGE_ID and isinstance(context.details.total_guests, int) and context.details.total_guests > 10:
-            result = self._handle_package_action("coimbatore_pontoon_customize", context)
-            return replace(result, draft_text="For more than 10 guests, we'll help you with a customized quotation 😊",
-                           reason_code="coimbatore_standard_custom_quote_required")
+            values = dict(context.form_values or {})
+            values.update({
+                "active_package_id": STANDARD_PACKAGE_ID,
+                "standard_package_presented": False,
+                "package_presentation_pending": False,
+            })
+            waiting_for_correction = replace(
+                context,
+                form_values=values,
+                pending_field="total_guests",
+                sales_stage=SalesStage.LEAD,
+            )
+            return ConversationResult(
+                action="answer_information",
+                draft_text=("The maximum capacity of the Pontoon Boat is 10 guests 😊\n\n"
+                            "Please send the correct number of guests from 1 to 10."),
+                reason_code="coimbatore_pontoon_capacity_correction_required",
+                detected_intent="visit_qualification",
+                detected_location="coimbatore",
+                response_language="en",
+                human_handover_required=False,
+                context=waiting_for_correction,
+                safe_metadata={
+                    "response_basis": "deterministic",
+                    "structured_grounding": True,
+                    "customer_response_sanitized": True,
+                    "automatic_reply_category": "information",
+                    "service_code": "pontoon_celebration",
+                    "capacity_limit": 10,
+                    "guest_correction_required": True,
+                },
+            )
         with latency_stage("exact_KB_package_lookup"), latency_stage("YAML_load"), latency_stage("package_selection"):
             package = load_package(package_id)
         if package.fixed_guest_count is not None:

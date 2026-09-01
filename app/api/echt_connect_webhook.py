@@ -23,6 +23,7 @@ from app.integrations.echt_connect import (
 )
 from app.schemas.echt_connect import EchtConnectInbound, EchtConnectReply
 from app.schemas.exotel_webhook import NormalizedInboundMessage
+from app.services.coimbatore.customer_details import customer_details_complete
 
 
 router = APIRouter(prefix="/webhooks/echt-connect", tags=["echt-connect"])
@@ -66,6 +67,15 @@ async def process_echt_connect_background(
             persisted = await run_in_threadpool(service.process, message)
             if persisted.duplicate:
                 logger.info("echt_connect_duplicate_skipped number_id=%s", inbound.number_id)
+                return
+            # Exotel owns the native customer-details Flow because the current
+            # CRM callback accepts only text/handover. Suppress the CRM reply
+            # until that Flow has persisted the customer's completed details.
+            if persisted.customer is not None and not customer_details_complete(persisted.customer):
+                logger.info(
+                    "echt_connect_reply_suppressed reason=customer_details_incomplete number_id=%s",
+                    inbound.number_id,
+                )
                 return
             if message.message_type != "text" or persisted.customer is None or persisted.conversation is None:
                 logger.info("echt_connect_message_skipped reason=unsupported_type number_id=%s", inbound.number_id)
