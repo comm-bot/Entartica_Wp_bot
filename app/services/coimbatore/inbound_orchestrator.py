@@ -35,8 +35,6 @@ from app.services.raipur.customer_understanding import parse_planned_date_text
 from app.services.raipur_inbound_orchestrator import _context_from_record, _context_to_record, _empty_context
 from app.services.latency import latency_stage
 from app.services.coimbatore.langgraph_workflow import CoimbatoreLangGraphWorkflow
-from app.integrations.razorpay import RazorpayPaymentLinkClient
-from app.services.coimbatore.payment_links import CoimbatorePaymentLinkService
 from app.services.coimbatore.customer_details import (
     CustomerDetailsFormService, customer_details_complete,
 )
@@ -734,67 +732,6 @@ class CoimbatoreInboundOrchestrator:
                            reason="coimbatore_llm_grounded", handoff=handoff)
 
     def _handle_package_action(self, action: str, context: ConversationContext) -> ConversationResult:
-        values = dict(context.form_values or {})
-        if (action == "coimbatore_pontoon_book_standard"
-                and values.get("active_package_id") == STANDARD_PACKAGE_ID):
-            details = context.details
-            pricing = resolve_standard_package_pricing(details.total_guests)
-            if pricing is None or details.preferred_date is None:
-                return handle_action(action, context, public_base_url=None,
-                                     standard_up_to_6_payment_configured=False)
-            if not bool(getattr(self._settings, "razorpay_enabled", False)):
-                fallback = handle_action(action, context, public_base_url=None,
-                                         standard_up_to_6_payment_configured=False)
-                metadata = dict(fallback.safe_metadata or {})
-                metadata.update(approved_coimbatore_payment_response=True, package_id=STANDARD_PACKAGE_ID,
-                                payment_provider="razorpay", razorpay_mode="test")
-                return replace(fallback, draft_text="The secure test payment link is not configured yet. Our team will help you continue safely.",
-                               safe_metadata=metadata)
-            key_id = getattr(self._settings, "razorpay_key_id", None)
-            key_secret = getattr(self._settings, "razorpay_key_secret", None)
-            try:
-                razorpay = RazorpayPaymentLinkClient(
-                    key_id=key_id or "", key_secret=key_secret.get_secret_value() if key_secret else "",
-                    mode=getattr(self._settings, "razorpay_mode", "test"),
-                    api_base_url=getattr(self._settings, "razorpay_api_base_url", "https://api.razorpay.com/v1"),
-                )
-                linked = CoimbatorePaymentLinkService(self._client, razorpay).create_or_reuse(
-                    customer_id=str(values.get("payment_customer_id") or ""),
-                    conversation_id=str(values.get("payment_conversation_id") or ""),
-                    customer_mobile=values.get("payment_customer_mobile"),
-                    customer_name=details.customer_name or values.get("payment_customer_name"),
-                    customer_email=values.get("customer_email"), event_date=details.preferred_date,
-                    preferred_time=details.preferred_time, guest_count=details.total_guests,
-                )
-            except Exception as error:
-                logger.error("razorpay_payment_link_failed error_category=%s", type(error).__name__)
-                fallback = handle_action(action, context, public_base_url=None,
-                                         standard_up_to_6_payment_configured=False)
-                metadata = dict(fallback.safe_metadata or {})
-                metadata.update(approved_coimbatore_payment_response=True, package_id=STANDARD_PACKAGE_ID,
-                                payment_provider="razorpay", razorpay_mode="test")
-                return replace(fallback, draft_text="I couldn't prepare the secure test payment link right now. Our team will help you continue safely.",
-                               safe_metadata=metadata)
-            values.update({"booking_ref": linked.booking["booking_ref"], "pricing_slab": pricing.slab_id,
-                           "regular_price": pricing.regular_price, "offer_price": pricing.offer_price})
-            updated = replace(context, form_values=values, sales_stage=SalesStage.PAYMENT_PENDING, pending_field=None)
-            text = ("🎉 Your booking offer is ready!\n\n"
-                    f"👥 Guests: {details.total_guests}\n💰 Offer Price: ₹{pricing.offer_price:,}/-\n\n"
-                    "Complete your secure payment below to confirm your Pontoon Celebration:\n\n"
-                    f"🔒 Secure Payment by Razorpay\n{linked.payment['payment_url']}")
-            return ConversationResult(
-                action="answer_information", draft_text=text,
-                reason_code="coimbatore_razorpay_payment_link",
-                detected_intent="booking", detected_location="coimbatore", response_language="en",
-                human_handover_required=False, context=updated,
-                safe_metadata={"response_basis":"deterministic", "structured_grounding":True,
-                    "customer_response_sanitized":True, "automatic_reply_category":"information",
-                    "package_id":STANDARD_PACKAGE_ID, "booking_ref":linked.booking["booking_ref"],
-                    "service_code":"pontoon_celebration", "approved_coimbatore_payment_response":True,
-                    "pricing_slab":pricing.slab_id, "offer_price":pricing.offer_price,
-                    "offer_price_paise":pricing.offer_price_paise, "payment_link_reused":linked.reused,
-                    "payment_provider":"razorpay", "razorpay_mode":"test"},
-            )
         return handle_action(
             action, context, public_base_url=getattr(self._settings, "public_base_url", None),
             standard_up_to_6_payment_configured=bool(

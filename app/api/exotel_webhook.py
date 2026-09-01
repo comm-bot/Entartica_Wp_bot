@@ -24,6 +24,7 @@ from app.services.raipur_draft_integration import create_draft_after_orchestrati
 from app.services.raipur_automatic_replies import attempt_automatic_reply
 from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
 from app.services.coimbatore.customer_details import customer_details_complete
+from app.services.inbound_persistence_retry import process_inbound_with_retry
 from app.services.coimbatore.pontoon_package import action_id as coimbatore_package_action_id
 from app.integrations.lead_email import SmtpLeadEmailNotifier, lead_email_from_context
 
@@ -128,7 +129,7 @@ async def process_inbound_messages_background(messages, settings, trace: Latency
 
 async def _process_one_inbound_message(service, message, settings, trace: LatencyTrace) -> None:
     """Run the full persistence-to-reply lifecycle under one conversation lock."""
-    result = await run_in_threadpool(service.process, message)
+    result = await run_in_threadpool(process_inbound_with_retry, service, message)
     trace.event("inbound_message_saved")
     if result.duplicate:
                 logger.info("orchestration_skipped request_id=%s reason=duplicate_inbound", trace.request_id)

@@ -85,51 +85,63 @@ def test_public_base_url_and_unknown_package_are_safe():
                             payment_destination_configured=False) is None
 
 
-def test_standard_book_now_sends_discount_and_https_page_through_eligible_draft():
+def test_standard_book_now_notifies_sales_without_sending_payment_link():
     result = handle_action("coimbatore_pontoon_book_standard", _context(STANDARD_PACKAGE_ID), public_base_url="https://book.entartica.test/")
-    assert "15% instant booking discount" in result.draft_text
-    assert "Secure Payment by Razorpay" in result.draft_text
-    assert "https://book.entartica.test/pay/coimbatore/standard" in result.draft_text
-    assert "/couple-romance" not in result.draft_text
-    assert "<script" not in result.draft_text and "<form" not in result.draft_text
+    assert "sales team has been notified" in result.draft_text
+    assert "Payment will be coordinated directly with our team outside WhatsApp" in result.draft_text
+    assert "http" not in result.draft_text and "Razorpay" not in result.draft_text
+    assert result.context.sales_stage == SalesStage.HANDOVER
+    assert result.human_handover_required is True
+    assert result.safe_metadata["handover_reason"] == "customer_requested_booking"
     draft = {"draft_status":"pending_review", "sent_at":None, "external_message_id":None}
     settings = SimpleNamespace(raipur_automatic_reply_enabled=True, exotel_outbound_enabled=True,
                                raipur_approved_draft_send_enabled=True, raipur_automatic_reply_intents=("information",))
     assert eligible_for_automatic_reply(settings, result, draft) == (True, "eligible")
 
 
-def test_couple_book_now_uses_couple_page_without_confirming_payment():
+def test_couple_book_now_notifies_sales_without_sending_payment_link():
     result = handle_action("coimbatore_pontoon_book_standard", _context(COUPLE_PACKAGE_ID), public_base_url="https://book.entartica.test")
-    assert "Couple Romance celebration" in result.draft_text
-    assert "https://book.entartica.test/pay/coimbatore/couple-romance" in result.draft_text
-    assert "/standard" not in result.draft_text
-    assert result.context.sales_stage == SalesStage.PAYMENT_PENDING
-    assert "payment_received" not in str(result.context).casefold()
-    assert "confirmed" not in result.draft_text.casefold()
+    assert "sales team has been notified" in result.draft_text
+    assert "http" not in result.draft_text and "Razorpay" not in result.draft_text
+    assert result.context.sales_stage == SalesStage.HANDOVER
+    assert result.safe_metadata["package_id"] == COUPLE_PACKAGE_ID
+
+
+def test_sales_and_customize_actions_send_professional_customer_acknowledgements():
+    context = _context(STANDARD_PACKAGE_ID)
+
+    sales = handle_action("coimbatore_pontoon_talk_sales", context)
+    assert "sales specialist has been notified" in sales.draft_text
+    assert "package details, availability, and the next steps" in sales.draft_text
+    assert sales.human_handover_required is True
+
+    customize = handle_action("coimbatore_pontoon_customize", context)
+    assert "sales team has been notified" in customize.draft_text
+    assert "decoration, cake, music" in customize.draft_text
+    assert customize.human_handover_required is True
 
 
 def test_book_now_with_unknown_package_never_receives_a_payment_url():
     result = handle_action("coimbatore_pontoon_book_standard", _context("unknown"), public_base_url="https://book.entartica.test")
     assert "https://" not in result.draft_text
-    assert result.safe_metadata["payment_link_unavailable"] is True
+    assert result.safe_metadata["payment_handled_outside_whatsapp"] is True
 
 
 @pytest.mark.parametrize(("guests", "slab", "amount"), ((8, "up_to_9", 6375), (10, "up_to_12", 7650)))
 def test_higher_slab_book_now_never_uses_up_to_6_payment_destination(guests, slab, amount):
     result = handle_action("coimbatore_pontoon_book_standard", _context(STANDARD_PACKAGE_ID, guests),
                            public_base_url="https://book.entartica.test")
-    assert f"₹{amount:,}" in result.draft_text
     assert "https://" not in result.draft_text and "/pay/coimbatore/standard" not in result.draft_text
-    assert result.safe_metadata["pricing_slab"] == slab
-    assert result.safe_metadata["payment_link_unavailable"] is True
+    assert result.safe_metadata["handover_context"]["pricing_slab"] == slab
+    assert result.safe_metadata["handover_context"]["offer_price"] == amount
 
 
-def test_configured_higher_slab_uses_only_its_own_payment_page():
+def test_configured_higher_slab_still_keeps_payment_outside_whatsapp():
     result = handle_action("coimbatore_pontoon_book_standard", _context(STANDARD_PACKAGE_ID, 8),
                            public_base_url="https://book.entartica.test",
                            standard_up_to_9_payment_configured=True)
-    assert "/pay/coimbatore/standard/up-to-9" in result.draft_text
-    assert result.safe_metadata["offer_price_paise"] == 637500
+    assert "http" not in result.draft_text and "Razorpay" not in result.draft_text
+    assert result.safe_metadata["handover_context"]["offer_price"] == 6375
 
 
 @pytest.mark.parametrize(("guests", "slab", "offer"), (
@@ -150,6 +162,6 @@ def test_standard_actions_and_photo_continuation_preserve_pricing_context(guests
     assert customized.safe_metadata["handover_context"]["offer_price"] == offer
     booked = handle_action("coimbatore_pontoon_book_standard", photos.context,
                            public_base_url="https://book.entartica.test")
-    assert booked.safe_metadata["pricing_slab"] == slab
-    assert booked.safe_metadata["offer_price"] == offer
+    assert booked.safe_metadata["handover_context"]["pricing_slab"] == slab
+    assert booked.safe_metadata["handover_context"]["offer_price"] == offer
     assert booked.context.form_values["active_package_id"] == STANDARD_PACKAGE_ID

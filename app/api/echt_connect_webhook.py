@@ -28,6 +28,7 @@ from app.integrations.echt_connect import (
 from app.schemas.echt_connect import EchtConnectInbound, EchtConnectReply
 from app.schemas.exotel_webhook import NormalizedInboundMessage
 from app.services.coimbatore.customer_details import customer_details_complete
+from app.services.inbound_persistence_retry import process_inbound_with_retry
 from app.services.coimbatore.pontoon_package import action_id as coimbatore_package_action_id
 from app.integrations.supabase import get_supabase_client
 from app.repositories.outbound_drafts import OutboundDraftRepository
@@ -133,7 +134,7 @@ async def process_echt_connect_background(
         lock = await _conversation_lock(inbound.conversation_id)
         async with lock:
             service = get_inbound_message_service()
-            persisted = await run_in_threadpool(service.process, message)
+            persisted = await run_in_threadpool(process_inbound_with_retry, service, message)
             if persisted.duplicate:
                 logger.info("echt_connect_duplicate_skipped number_id=%s", inbound.number_id)
                 return

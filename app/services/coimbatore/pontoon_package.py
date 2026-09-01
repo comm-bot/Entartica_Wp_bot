@@ -22,6 +22,11 @@ CONFIG_FILE = ROOT / "config" / "Coimbatore" / "coimbatore_pontoon_standard.yaml
 MASTER_KB = ROOT / "documents" / "Coimbatore" / "active" / "COIMBATORE_KNOWLEDGE_BASE.md"
 STANDARD_PACKAGE_ID = "coimbatore_pontoon_standard"
 COUPLE_PACKAGE_ID = "coimbatore_pontoon_couple_romance"
+PRIMARY_SALES_ACTIONS = (
+    InteractiveOption("coimbatore_pontoon_book_standard", "Book Now"),
+    InteractiveOption("coimbatore_pontoon_customize", "Customize"),
+    InteractiveOption("coimbatore_pontoon_talk_sales", "Talk to Sales Person"),
+)
 STANDARD_PACKAGE_IMAGE_URL = (
     "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/"
     "pontoon_boat_celebration_Coimbtore.jpg"
@@ -224,11 +229,11 @@ def action_message(
     body: str = "What would you like to do next?",
     header_image_url: str | None = None,
 ) -> InteractiveMessage:
-    # WhatsApp quick replies allow at most three buttons. The Standard package
-    # has four required actions, so use one provider-supported list without
-    # dropping any option.
-    return InteractiveMessage(kind="list" if len(package.actions) > 3 else "buttons", body=body, fallback_text=body,
-                              button_label="Package Actions", options=package.actions,
+    # Every customer-facing package variant ends with the same three direct
+    # sales actions. Media, brochure, and package-switch intents remain routed
+    # separately, but are not allowed to displace these primary buttons.
+    return InteractiveMessage(kind="buttons", body=body, fallback_text=body,
+                              button_label="Choose an option", options=PRIMARY_SALES_ACTIONS,
                               header_image_url=header_image_url)
 
 
@@ -395,7 +400,11 @@ def handle_action(
     planned, guests = context.details.preferred_date, context.details.total_guests
     metadata = {"response_mode": "deterministic_interactive", "response_basis": "deterministic", "structured_grounding": True,
                 "customer_response_sanitized": True, "button_action": action, "service_code": "pontoon_celebration"}
-    handover = action in {"coimbatore_pontoon_customize", "coimbatore_pontoon_talk_sales"}
+    handover = action in {
+        "coimbatore_pontoon_book_standard",
+        "coimbatore_pontoon_customize",
+        "coimbatore_pontoon_talk_sales",
+    }
     if action in {"coimbatore_pontoon_check_couple", "coimbatore_pontoon_check_standard"}:
         package_id = COUPLE_PACKAGE_ID if action == "coimbatore_pontoon_check_couple" else STANDARD_PACKAGE_ID
         package = load_package(package_id)
@@ -426,88 +435,53 @@ def handle_action(
             ),
         })
     elif action == "coimbatore_pontoon_book_standard":
-        if planned is None:
-            return ConversationResult(
-                action="answer_information",
-                draft_text="Sure 😊 Please share your celebration date before we continue with booking.",
-                reason_code="coimbatore_booking_date_required",
-                detected_intent="booking",
-                detected_location="coimbatore",
-                response_language="en",
-                human_handover_required=False,
-                context=replace(context, pending_field="preferred_date"),
-                safe_metadata={**metadata, "booking_allowed": False, "date_required": True},
-            )
         values = dict(context.form_values or {})
-        package_id = values.get("active_package_id")
-        if package_id not in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID}:
-            package_id = values.get("standard_package_id")
+        package_id = values.get("active_package_id") or values.get("standard_package_id")
         pricing = resolve_standard_package_pricing(guests) if package_id == STANDARD_PACKAGE_ID else None
-        configured = True
         if pricing is not None:
-            configured = {
-                "up_to_6": standard_up_to_6_payment_configured,
-                "up_to_9": standard_up_to_9_payment_configured,
-                "up_to_12": standard_up_to_12_payment_configured,
-            }[pricing.slab_id]
             values.update({"pricing_slab": pricing.slab_id, "regular_price": pricing.regular_price,
                            "offer_price": pricing.offer_price})
-        url = payment_page_url(
-            public_base_url, package_id, pricing_slab=pricing.slab_id if pricing else None,
-            payment_destination_configured=configured and (package_id != STANDARD_PACKAGE_ID or pricing is not None),
-        ) if isinstance(package_id, str) else None
         values["booking_intent"] = True
-        context = replace(context, form_values=values, sales_stage=SalesStage.PAYMENT_PENDING, pending_field=None)
-        if url is None and pricing is not None:
-            text = (f"Your booking amount is ₹{pricing.offer_price:,}. I'm getting the secure payment option "
-                    "ready for this booking.")
-            logger.warning("coimbatore_standard_payment_destination_missing pricing_slab=%s offer_price=%s",
-                           pricing.slab_id, pricing.offer_price)
-            metadata.update(automatic_reply_category="information", payment_link_unavailable=True,
-                            package_id=package_id, pricing_slab=pricing.slab_id,
-                            offer_price=pricing.offer_price, offer_price_paise=pricing.offer_price_paise)
-        elif url is None:
-            text = "I couldn't prepare a secure payment link right now. Our team will help you continue safely."
-            metadata.update(automatic_reply_category="information", payment_link_unavailable=True)
-        elif package_id == COUPLE_PACKAGE_ID:
-            text = (
-                "❤️ Book Now & Save 15%\n\n"
-                "Make your celebration special! You're getting an exclusive 15% instant booking discount "
-                "for confirming your Couple Romance celebration now.\n\n"
-                "Complete your secure payment through Razorpay using the link below. You'll be asked for "
-                "your customer details during the payment process.\n\n"
-                f"🔒 Secure Payment by Razorpay\n\nPay & Confirm Booking:\n{url}"
+        context = replace(context, form_values=values, sales_stage=SalesStage.HANDOVER, pending_field=None)
+        text = (
+            "🎉 Excellent choice! We’d love to help you plan your Pontoon Celebration.\n\n"
+            "Our sales team has been notified and will contact you to confirm availability, booking details, "
+            "and the payment process. Payment will be coordinated directly with our team outside WhatsApp.\n\n"
+            "Your booking is not confirmed until our team completes the final verification."
+        )
+        metadata.update({
+            "package_id": package_id,
+            "automatic_reply_category": "information",
+            "handover_reason": "customer_requested_booking",
+            "payment_handled_outside_whatsapp": True,
+            "handover_context": {
+                "location": "coimbatore", "service": "pontoon_celebration",
+                "package_id": package_id,
+                "planned_date": planned.isoformat() if planned is not None else None,
+                "guest_count": guests,
+            },
+        })
+        if pricing is not None:
+            metadata["handover_context"].update(
+                pricing_slab=pricing.slab_id,
+                regular_price=pricing.regular_price,
+                offer_price=pricing.offer_price,
             )
-        else:
-            text = (
-                "🎉 Book Now & Save 15%\n\n"
-                "Great choice! You're getting an exclusive 15% instant booking discount for confirming "
-                "your Pontoon Celebration now.\n\n"
-                "Complete your secure payment through Razorpay using the link below. You'll be asked for "
-                "your customer details during the payment process.\n\n"
-                f"🔒 Secure Payment by Razorpay\n\nPay & Confirm Booking:\n{url}"
-            )
-        if url is not None:
-            metadata.update({
-                "package_id": package_id, "payment_page_path": urlparse(url).path,
-                "approved_package": True, "approved_coimbatore_master": True,
-                "answer_source": "pontoon_package_boundary",
-                "source_filename": "COIMBATORE_KNOWLEDGE_BASE.md",
-                "knowledge_location": "coimbatore", "authority": "approved_current",
-                "automatic_reply_category": "information",
-            })
-            if pricing is not None:
-                metadata.update(pricing_slab=pricing.slab_id, regular_price=pricing.regular_price,
-                                offer_price=pricing.offer_price, offer_price_paise=pricing.offer_price_paise)
     elif action == "coimbatore_pontoon_ask_question":
         active_package = (context.form_values or {}).get("active_package_id")
         package_name = "Couple Romance Package" if active_package == COUPLE_PACKAGE_ID else "Standard Pontoon Package"
         text = f"Sure 😊 What would you like to know about the {package_name}?"
     elif handover:
         text = (
-            "Sure 😊 I’ll connect you with our sales team for further assistance."
+            "👋 Thank you for your interest!\n\n"
+            "Our Pontoon Celebration sales specialist has been notified and will help you with package "
+            "details, availability, and the next steps. You can also share any questions here while you wait."
             if action == "coimbatore_pontoon_talk_sales"
-            else "Sure 😊 Our team will help you with a customized celebration requirement."
+            else (
+                "✨ Let’s create a Pontoon Celebration that feels uniquely yours!\n\n"
+                "Our sales team has been notified and will help you personalize the decoration, cake, music, "
+                "and other special requirements. Please share the changes you have in mind here."
+            )
         )
         context = replace(context, sales_stage=SalesStage.HANDOVER)
         metadata["handover_reason"] = (

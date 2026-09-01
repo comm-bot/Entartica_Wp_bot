@@ -459,9 +459,9 @@ def test_booking_business_transition_and_live_fact_boundaries():
     bot = service(); run(bot, "we are couple")
     bot._contexts.record["booking_details"]["preferred_date"] = date(2026, 8, 30).isoformat()
     booking = run(bot, "i want to book this package")
-    assert booking.context.sales_stage == SalesStage.PAYMENT_PENDING
+    assert booking.context.sales_stage == SalesStage.HANDOVER
     assert booking.context.pending_field is None
-    assert "secure test payment link is not configured" in booking.draft_text
+    assert "sales team has been notified" in booking.draft_text
     assert "https://" not in booking.draft_text
     assert "confirmed" not in booking.draft_text.casefold()
     bot = service(); run(bot, "hello")
@@ -527,14 +527,15 @@ def test_session_mode_ignores_stale_supabase_and_keeps_guest_date_in_process():
     assert contexts.saves == 3
 
 
-def test_session_restart_reset_after_book_now_payment_link():
+def test_session_restart_reset_after_book_now_sales_handover():
     contexts = Contexts()
     bot = service(persist=False, contexts=contexts)
     run(bot, "5, 06/10/2026")
     interested = run(bot, "Book Now")
     assert interested.context.pending_field is None
-    assert interested.context.sales_stage == SalesStage.PAYMENT_PENDING
-    assert "secure test payment link is not configured" in interested.draft_text
+    assert interested.context.sales_stage == SalesStage.HANDOVER
+    assert "sales team has been notified" in interested.draft_text
+    assert "http" not in interested.draft_text and "Razorpay" not in interested.draft_text
 
     reset = run(bot, "start over")
     assert reset.draft_text == (

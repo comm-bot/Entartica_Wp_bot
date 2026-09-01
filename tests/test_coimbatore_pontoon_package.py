@@ -5,7 +5,7 @@ import pytest
 from app.services.booking_enquiries import BookingDetails
 from app.services.coimbatore.pontoon_package import (
     MASTER_KB,
-    action_id, is_package_request, load_couple_package, load_standard_package, package_request_id,
+    action_id, action_message, is_package_request, load_couple_package, load_standard_package, package_request_id,
     render_package, resolve_s3_image_url, resolve_standard_package_pricing,
 )
 from app.services.raipur.response_models import ConversationContext
@@ -84,6 +84,24 @@ def test_standard_package_renders_only_resolved_slab_price(guests, regular, offe
     text = render_package(load_standard_package(), date(2026, 8, 30), guests)
     assert text.startswith("Thank you for sharing your details 😊")
     assert f"Guests: {guests}" in text and regular in text and offer in text
+
+
+@pytest.mark.parametrize(("package_kind", "guests"), (
+    ("couple", 2),
+    ("standard", 5),
+    ("standard", 8),
+    ("standard", 10),
+))
+def test_all_four_customer_package_variants_have_three_working_sales_buttons(package_kind, guests):
+    package = load_couple_package() if package_kind == "couple" else load_standard_package()
+    message = action_message(package, body=render_package(package, date(2027, 9, 30), guests))
+
+    assert message.kind == "buttons"
+    assert [(option.id, option.title) for option in message.options] == [
+        ("coimbatore_pontoon_book_standard", "Book Now"),
+        ("coimbatore_pontoon_customize", "Customize"),
+        ("coimbatore_pontoon_talk_sales", "Talk to Sales Person"),
+    ]
 
 
 def test_typed_and_stable_actions_are_deterministic():
