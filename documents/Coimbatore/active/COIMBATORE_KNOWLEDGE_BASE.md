@@ -108,9 +108,6 @@ Pontoon Couple Romance Celebration ❤️✨
 💰 Package Price: ~₹3,999/-~
 😍 Offer Price: ₹3,400/- (15% off) including GST
 
-🕐 Preferred booking time can be selected between 6:00 AM and 9:00 PM,
-subject to live availability.
-
 🍽️ Food is not included in the package.
 
 ## BEST SUITED FOR

@@ -284,9 +284,9 @@ def test_standard_package_can_open_couple_package_in_same_interactive_layout():
     assert "~₹3,999/-~" in couple.draft_text
     assert "₹3,400/- (15% off)" in couple.draft_text
     interactive = couple.safe_metadata["interactive_message"]
-    assert interactive["kind"] == "buttons"
+    assert interactive["kind"] == "list"
     assert [option["title"] for option in interactive["options"]] == [
-        "Book Now", "Customize", "Talk to Sales Person",
+        "Book Now", "Talk to Sales Person", "Customize", "See Photo & Video", "Check Standard Package",
     ]
     assert couple.context.form_values["active_package_id"] == "coimbatore_pontoon_couple_romance"
     settings = SimpleNamespace(
@@ -302,9 +302,7 @@ def test_standard_package_can_open_couple_package_in_same_interactive_layout():
     assert standard.safe_metadata["package_id"] == "coimbatore_pontoon_standard"
     assert "~₹5,999/-~" in standard.draft_text
     assert "₹5,100/- (15% OFF)" in standard.draft_text
-    assert [option["title"] for option in standard.safe_metadata["interactive_message"]["options"]] == [
-        "Book Now", "Customize", "Talk to Sales Person",
-    ]
+    assert standard.safe_metadata["interactive_message"]["options"][-1]["title"] == "Check Couple Package"
 
 
 def test_couple_photo_action_sends_basic_decor_photo_and_video_only():

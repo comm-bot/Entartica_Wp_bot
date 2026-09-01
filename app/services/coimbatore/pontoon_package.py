@@ -22,11 +22,6 @@ CONFIG_FILE = ROOT / "config" / "Coimbatore" / "coimbatore_pontoon_standard.yaml
 MASTER_KB = ROOT / "documents" / "Coimbatore" / "active" / "COIMBATORE_KNOWLEDGE_BASE.md"
 STANDARD_PACKAGE_ID = "coimbatore_pontoon_standard"
 COUPLE_PACKAGE_ID = "coimbatore_pontoon_couple_romance"
-PRIMARY_SALES_ACTIONS = (
-    InteractiveOption("coimbatore_pontoon_book_standard", "Book Now"),
-    InteractiveOption("coimbatore_pontoon_customize", "Customize"),
-    InteractiveOption("coimbatore_pontoon_talk_sales", "Talk to Sales Person"),
-)
 STANDARD_PACKAGE_IMAGE_URL = (
     "https://coimbatore-chatbot.s3.ap-south-1.amazonaws.com/"
     "pontoon_boat_celebration_Coimbtore.jpg"
@@ -229,11 +224,11 @@ def action_message(
     body: str = "What would you like to do next?",
     header_image_url: str | None = None,
 ) -> InteractiveMessage:
-    # Every customer-facing package variant ends with the same three direct
-    # sales actions. Media, brochure, and package-switch intents remain routed
-    # separately, but are not allowed to displace these primary buttons.
-    return InteractiveMessage(kind="buttons", body=body, fallback_text=body,
-                              button_label="Choose an option", options=PRIMARY_SALES_ACTIONS,
+    # WhatsApp quick replies allow at most three buttons. Packages expose more
+    # actions, so keep every action in one provider-supported list.
+    return InteractiveMessage(kind="list" if len(package.actions) > 3 else "buttons",
+                              body=body, fallback_text=body,
+                              button_label="Package Actions", options=package.actions,
                               header_image_url=header_image_url)
 
 

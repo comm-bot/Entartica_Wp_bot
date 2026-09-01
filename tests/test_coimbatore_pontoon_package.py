@@ -92,16 +92,19 @@ def test_standard_package_renders_only_resolved_slab_price(guests, regular, offe
     ("standard", 8),
     ("standard", 10),
 ))
-def test_all_four_customer_package_variants_have_three_working_sales_buttons(package_kind, guests):
+def test_all_four_customer_package_variants_keep_every_package_action(package_kind, guests):
     package = load_couple_package() if package_kind == "couple" else load_standard_package()
     message = action_message(package, body=render_package(package, date(2027, 9, 30), guests))
 
-    assert message.kind == "buttons"
-    assert [(option.id, option.title) for option in message.options] == [
-        ("coimbatore_pontoon_book_standard", "Book Now"),
-        ("coimbatore_pontoon_customize", "Customize"),
-        ("coimbatore_pontoon_talk_sales", "Talk to Sales Person"),
-    ]
+    assert message.kind == "list"
+    titles = [option.title for option in message.options]
+    assert titles[:3] == ["Book Now", "Talk to Sales Person", "Customize"]
+    assert "See Photo & Video" in titles
+    if package_kind == "couple":
+        assert "Check Standard Package" in titles
+    else:
+        assert "See Pontoon Brochure" in titles
+        assert "Check Couple Package" in titles
 
 
 def test_typed_and_stable_actions_are_deterministic():
@@ -135,6 +138,7 @@ def test_exact_couple_kb_block_and_request_resolution():
     assert package.actions[-1].title == "Check Standard Package"
     text = render_package(package, date(2026, 8, 30), 99)
     assert all(value in text for value in ("Event Date: 30 Aug 2026", "Guests: 2", "~₹3,999/-~", "₹3,400/- (15% off) including GST", "20 Minutes Private Pontoon Boat Ride"))
+    assert "Preferred booking time can be selected" not in text
     assert package_request_id("₹3999 package") == "coimbatore_pontoon_couple_romance"
     assert package_request_id("₹5999 package") == "coimbatore_pontoon_standard"
     assert package_request_id("package") == "choice"
