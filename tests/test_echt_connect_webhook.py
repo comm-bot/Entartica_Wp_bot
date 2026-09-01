@@ -183,7 +183,9 @@ def test_normal_bot_reply_uses_exotel_and_does_not_call_crm_reply(monkeypatch):
             return persisted
 
     class Orchestrator:
-        def process(self, _message, **_kwargs):
+        def process(self, message, **_kwargs):
+            assert message.message_type == "text"
+            assert message.content == "See Pontoon Brochure"
             return SimpleNamespace(
                 draft_text="Approved package with actions",
                 human_handover_required=False,
@@ -217,6 +219,8 @@ def test_normal_bot_reply_uses_exotel_and_does_not_call_crm_reply(monkeypatch):
     )
     active_payload = payload()
     active_payload["mode"] = "active"
+    active_payload["messageType"] = "list"
+    active_payload["messageText"] = "See Pontoon Brochure"
     inbound = echt_connect_webhook.EchtConnectInbound.model_validate(active_payload)
 
     import asyncio

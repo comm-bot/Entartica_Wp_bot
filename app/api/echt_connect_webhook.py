@@ -112,16 +112,20 @@ async def process_echt_connect_background(
 ) -> None:
     """Persist CRM inbound, send bot output via Exotel, and notify handover."""
     try:
-        supported_text_type = inbound.message_type.casefold() in {
-            "text", "button", "button_reply", "interactive", "list_reply",
-        }
+        # CRM providers use several names for WhatsApp list/button replies
+        # (for example list, list_reply, interactive, or button_response).
+        # Their documented stable field is messageText, so any non-empty text
+        # is safe to pass through the existing action-label/action-id parser.
+        has_message_text = isinstance(inbound.message_text, str) and bool(
+            inbound.message_text.strip()
+        )
         message = NormalizedInboundMessage(
             external_provider="echt_connect",
             external_message_id=inbound.message_id,
             customer_whatsapp_number=_phone(inbound.customer_phone),
             business_whatsapp_number=_phone(inbound.business_phone or credentials.business_phone),
             profile_name=inbound.customer_name,
-            message_type="text" if supported_text_type and inbound.message_text else "other",
+            message_type="text" if has_message_text else "other",
             content=inbound.message_text,
             received_at=inbound.timestamp,
         )
