@@ -28,6 +28,7 @@ from app.integrations.echt_connect import (
 from app.schemas.echt_connect import EchtConnectInbound, EchtConnectReply
 from app.schemas.exotel_webhook import NormalizedInboundMessage
 from app.services.coimbatore.customer_details import customer_details_complete
+from app.services.coimbatore.pontoon_package import action_id as coimbatore_package_action_id
 from app.integrations.supabase import get_supabase_client
 from app.repositories.outbound_drafts import OutboundDraftRepository
 from app.services.raipur_automatic_replies import attempt_automatic_reply
@@ -147,6 +148,15 @@ async def process_echt_connect_background(
                 return
             if message.message_type != "text" or persisted.customer is None or persisted.conversation is None:
                 logger.info("echt_connect_message_skipped reason=unsupported_type number_id=%s", inbound.number_id)
+                return
+            # Exotel sent the interactive message and therefore owns its
+            # list/button reply. Suppress a CRM mirror of the same action so
+            # media, documents, booking, or handover cannot run twice.
+            if coimbatore_package_action_id(message.content) is not None:
+                logger.info(
+                    "echt_connect_message_skipped reason=exotel_owns_package_action number_id=%s",
+                    inbound.number_id,
+                )
                 return
             orchestrator = await run_in_threadpool(get_raipur_inbound_orchestrator)
             result = await run_in_threadpool(

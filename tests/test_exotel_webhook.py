@@ -246,6 +246,55 @@ def test_echt_enabled_makes_exotel_skip_completed_customer_text(monkeypatch) -> 
     assert orchestrator.calls == 0
 
 
+def test_echt_enabled_still_allows_exotel_owned_package_list_reply(monkeypatch) -> None:
+    class Service:
+        def process(self, _message):
+            return InboundMessageResult(
+                False,
+                {"id": "customer", "name": "Test Customer", "email": "test@example.com"},
+                {"id": "conversation"},
+                {"id": "inbound"},
+            )
+
+    class Orchestrator:
+        calls = 0
+
+        def process(self, message, *_args, **_kwargs):
+            self.calls += 1
+            assert message.content == "coimbatore_pontoon_more_photos"
+            return SimpleNamespace(action="answer_information", reason_code="coimbatore_package_action")
+
+    action_payload = _payload()
+    action_payload["whatsapp"]["messages"][0]["content"] = {
+        "type": "interactive",
+        "interactive": {
+            "type": "list_reply",
+            "list_reply": {
+                "id": "coimbatore_pontoon_more_photos",
+                "title": "See Photo & Video",
+            },
+        },
+    }
+    orchestrator = Orchestrator()
+    configured = _settings()
+    configured.raipur_inbound_orchestrator_enabled = True
+    configured.echt_connect_enabled = True
+    monkeypatch.setattr(exotel_webhook, "get_inbound_message_service", Service)
+    monkeypatch.setattr(exotel_webhook, "get_raipur_inbound_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(exotel_webhook, "get_supabase_client", lambda: object())
+    monkeypatch.setattr(exotel_webhook, "OutboundDraftRepository", lambda _client: object())
+    monkeypatch.setattr(
+        exotel_webhook,
+        "create_draft_after_orchestration",
+        lambda **_kwargs: SimpleNamespace(draft_saved=False, reason_code="disabled"),
+    )
+    message = exotel_webhook.normalize_exotel_payload(action_payload)[0]
+
+    asyncio.run(exotel_webhook.process_inbound_messages_background([message], configured))
+
+    assert orchestrator.calls == 1
+
+
 def test_orchestrator_dependency_graph_is_constructed_once(monkeypatch) -> None:
     calls = []
     client, settings = object(), object()

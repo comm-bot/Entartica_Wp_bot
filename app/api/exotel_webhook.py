@@ -24,6 +24,7 @@ from app.services.raipur_draft_integration import create_draft_after_orchestrati
 from app.services.raipur_automatic_replies import attempt_automatic_reply
 from app.services.latency import LatencyTrace, latency_stage, use_latency_trace
 from app.services.coimbatore.customer_details import customer_details_complete
+from app.services.coimbatore.pontoon_package import action_id as coimbatore_package_action_id
 
 
 router = APIRouter(prefix="/webhooks/exotel", tags=["exotel"])
@@ -147,6 +148,7 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
         bool(getattr(settings, "echt_connect_enabled", False))
         and message.message_type == "text"
         and customer_details_complete(result.customer)
+        and coimbatore_package_action_id(message.content) is None
     ):
                 logger.info(
                     "orchestration_skipped reason=echt_connect_owns_completed_customer_text"
