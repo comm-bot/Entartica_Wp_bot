@@ -34,6 +34,7 @@ from app.services.raipur.sales_state import SalesStage
 from app.services.raipur.customer_understanding import parse_planned_date_text
 from app.services.raipur_inbound_orchestrator import _context_from_record, _context_to_record, _empty_context
 from app.services.latency import latency_stage
+from app.services.inbound_persistence_retry import run_with_transient_retry
 from app.services.coimbatore.langgraph_workflow import CoimbatoreLangGraphWorkflow
 from app.services.coimbatore.customer_details import (
     CustomerDetailsFormService, customer_details_complete,
@@ -149,8 +150,11 @@ class CoimbatoreInboundOrchestrator:
                 flow_id = getattr(self._settings, "coimbatore_customer_details_flow_id", None)
                 if not isinstance(flow_id, str) or not flow_id.strip():
                     raise RuntimeError("coimbatore_customer_details_flow_id_missing")
-                token = self._customer_details.issue_native_token(
-                    customer_id=str(customer_id), conversation_id=str(conversation_id),
+                token = run_with_transient_retry(
+                    lambda: self._customer_details.issue_native_token(
+                        customer_id=str(customer_id), conversation_id=str(conversation_id),
+                    ),
+                    operation_name="customer_details_flow_token",
                 )
                 interactive = customer_details_flow(flow_id=flow_id.strip(), flow_token=token)
                 prompt = interactive.body

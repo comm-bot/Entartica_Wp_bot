@@ -3,7 +3,10 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.services.inbound_persistence_retry import process_inbound_with_retry
+from app.services.inbound_persistence_retry import (
+    process_inbound_with_retry,
+    run_with_transient_retry,
+)
 
 
 def test_transient_supabase_disconnect_is_retried_once_with_same_message():
@@ -49,3 +52,19 @@ def test_business_failure_is_not_retried():
     with pytest.raises(ValueError, match="invalid inbound"):
         process_inbound_with_retry(service, object())
     assert service.calls == 1
+
+
+def test_customer_details_token_operation_recovers_from_first_disconnect():
+    attempts = []
+
+    def issue_token():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected")
+        return "flow-token"
+
+    assert run_with_transient_retry(
+        issue_token,
+        operation_name="customer_details_flow_token",
+    ) == "flow-token"
+    assert len(attempts) == 2

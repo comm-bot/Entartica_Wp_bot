@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import httpx
 
@@ -18,6 +18,22 @@ _TRANSIENT_TRANSPORT_ERRORS = (
     httpx.PoolTimeout,
 )
 
+T = TypeVar("T")
+
+
+def run_with_transient_retry(operation: Callable[[], T], *, operation_name: str) -> T:
+    """Run one Supabase-backed operation with one transport-only retry."""
+
+    try:
+        return operation()
+    except _TRANSIENT_TRANSPORT_ERRORS as error:
+        logger.warning(
+            "supabase_transport_retry operation=%s attempt=2 max_attempts=2 error_category=%s",
+            operation_name,
+            type(error).__name__,
+        )
+        return operation()
+
 
 def process_inbound_with_retry(service: Any, message: Any) -> Any:
     """Retry one transient persistence transport failure exactly once.
@@ -27,11 +43,7 @@ def process_inbound_with_retry(service: Any, message: Any) -> Any:
     Business, validation, and database constraint errors are never retried.
     """
 
-    try:
-        return service.process(message)
-    except _TRANSIENT_TRANSPORT_ERRORS as error:
-        logger.warning(
-            "inbound_persistence_retry attempt=2 max_attempts=2 error_category=%s",
-            type(error).__name__,
-        )
-        return service.process(message)
+    return run_with_transient_retry(
+        lambda: service.process(message),
+        operation_name="inbound_persistence",
+    )

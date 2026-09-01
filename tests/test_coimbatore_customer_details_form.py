@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import uuid
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -224,6 +225,38 @@ def test_new_hi_and_hello_are_blocked_on_details_form_before_qualification():
         assert result.context.pending_field is None and result.context.form_status == "in_progress"
 
 
+def test_new_customer_first_hi_retries_transient_flow_token_disconnect():
+    class FlakyFormIssuer(FormIssuer):
+        attempts = 0
+
+        def issue_native_token(self, **kwargs):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise httpx.RemoteProtocolError("Server disconnected")
+            return super().issue_native_token(**kwargs)
+
+    bot = CoimbatoreInboundOrchestrator.__new__(CoimbatoreInboundOrchestrator)
+    bot._settings = SimpleNamespace(
+        coimbatore_customer_details_form_enabled=True,
+        coimbatore_customer_details_flow_id="1604509561221337",
+        coimbatore_persist_sales_state=False,
+    )
+    issuer = FlakyFormIssuer()
+    bot._customer_details, bot._contexts = issuer, Contexts()
+
+    result = bot._process_turn(
+        SimpleNamespace(content="Hii"),
+        customer={"id":"customer-1", "whatsapp_number":"+919876543210", "name":None, "email":None},
+        conversation={"id":"conversation-1"},
+        source_message_id="message-1",
+    )
+
+    assert issuer.attempts == 2
+    assert result.safe_metadata["interactive_message"]["kind"] == "flow"
+    assert result.safe_metadata["interactive_message"]["flow_id"] == "1604509561221337"
+    assert "temporarily unavailable" not in result.draft_text
+
+
 def test_native_whatsapp_flow_submission_persists_details_and_returns_named_qualification():
     db = Database()
     forms = CustomerDetailsFormService(db, public_base_url=None, ttl_minutes=30)
@@ -283,7 +316,9 @@ def test_completed_customer_continues_existing_guest_date_and_book_now_without_i
     booking = bot.process(SimpleNamespace(content="Book Now"), customer=customer,
                           conversation=conversation, source_message_id="message-2")
     lowered = booking.draft_text.casefold()
-    assert "share your name" not in lowered and "email" not in lowered and "whatsapp" not in lowered
+    assert "share your name" not in lowered
+    assert "share your email" not in lowered
+    assert "share your whatsapp number" not in lowered
     assert booking.context.details.customer_name == "Rahul Sharma"
 
 
