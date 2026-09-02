@@ -94,11 +94,7 @@ class InboundMessageService:
                     conversation_id=conversation["id"],
                 )
         except DuplicateMessageError:
-            existing = self._messages.find_inbound_by_provider_id(
-                message.external_provider,
-                message.external_message_id,
-            )
-            return InboundMessageResult(True, customer, conversation, existing)
+            return InboundMessageResult(True, customer, conversation)
         except Exception as error:
             _log_repository_failure("message_store_inbound", error)
             raise
