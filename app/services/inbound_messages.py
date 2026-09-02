@@ -54,6 +54,7 @@ class InboundMessageResult:
     customer: dict[str, Any] | None = None
     conversation: dict[str, Any] | None = None
     inbound_message: dict[str, Any] | None = None
+    recovered_after_transient_duplicate: bool = False
 
 
 class InboundMessageService:
@@ -93,7 +94,11 @@ class InboundMessageService:
                     conversation_id=conversation["id"],
                 )
         except DuplicateMessageError:
-            return InboundMessageResult(True, customer, conversation)
+            existing = self._messages.find_inbound_by_provider_id(
+                message.external_provider,
+                message.external_message_id,
+            )
+            return InboundMessageResult(True, customer, conversation, existing)
         except Exception as error:
             _log_repository_failure("message_store_inbound", error)
             raise

@@ -131,10 +131,16 @@ async def _process_one_inbound_message(service, message, settings, trace: Latenc
     """Run the full persistence-to-reply lifecycle under one conversation lock."""
     result = await run_in_threadpool(process_inbound_with_retry, service, message)
     trace.event("inbound_message_saved")
-    if result.duplicate:
+    if result.duplicate and not result.recovered_after_transient_duplicate:
                 logger.info("orchestration_skipped request_id=%s reason=duplicate_inbound", trace.request_id)
                 trace.summary(intent="duplicate", response_mode="duplicate", response_basis="none")
                 return
+    if result.recovered_after_transient_duplicate:
+                logger.warning(
+                    "inbound_ambiguous_insert_recovered request_id=%s message_id=%s",
+                    trace.request_id,
+                    message.external_message_id,
+                )
     if not getattr(settings, "raipur_inbound_orchestrator_enabled", False):
                 logger.info("orchestration_skipped request_id=%s reason=feature_disabled", trace.request_id)
                 trace.summary(intent="feature_disabled", response_mode="none", response_basis="none")

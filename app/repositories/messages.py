@@ -47,6 +47,22 @@ class MessageRepository:
             raise
         return response.data[0]
 
+    def find_inbound_by_provider_id(
+        self, external_provider: str, external_message_id: str
+    ) -> dict[str, Any] | None:
+        """Return the durable inbound row after an ambiguous insert response."""
+
+        response = (
+            self._client.table("messages")
+            .select("*")
+            .eq("direction", "inbound")
+            .eq("external_provider", external_provider)
+            .eq("external_message_id", external_message_id)
+            .maybe_single()
+            .execute()
+        )
+        return response.data if response is not None and isinstance(response.data, dict) else None
+
     def create_outbound_pending(
         self, *, customer_id: str, conversation_id: str, content: str
     ) -> dict[str, Any]:

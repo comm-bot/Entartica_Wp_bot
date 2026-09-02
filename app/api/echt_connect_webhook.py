@@ -135,9 +135,15 @@ async def process_echt_connect_background(
         async with lock:
             service = get_inbound_message_service()
             persisted = await run_in_threadpool(process_inbound_with_retry, service, message)
-            if persisted.duplicate:
+            if persisted.duplicate and not persisted.recovered_after_transient_duplicate:
                 logger.info("echt_connect_duplicate_skipped number_id=%s", inbound.number_id)
                 return
+            if persisted.recovered_after_transient_duplicate:
+                logger.warning(
+                    "echt_connect_ambiguous_insert_recovered number_id=%s message_id=%s",
+                    inbound.number_id,
+                    inbound.message_id,
+                )
             # Exotel owns the native customer-details Flow because the current
             # CRM callback accepts only text/handover. Suppress the CRM reply
             # until that Flow has persisted the customer's completed details.

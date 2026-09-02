@@ -48,8 +48,11 @@ def test_process_acknowledges_duplicate_message() -> None:
     service._customers.get_or_create.return_value = {"id": "customer-1"}
     service._conversations.get_or_create_open.return_value = {"id": "conversation-1"}
     service._messages.store_inbound.side_effect = DuplicateMessageError()
+    service._messages.find_inbound_by_provider_id.return_value = {"id": "inbound-1"}
 
-    assert service.process(_message()).duplicate is True
+    result = service.process(_message())
+    assert result.duplicate is True
+    assert result.inbound_message == {"id": "inbound-1"}
 
 
 def test_repository_failure_diagnostic_excludes_personal_data(caplog) -> None:
