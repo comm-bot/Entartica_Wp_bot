@@ -117,6 +117,11 @@ def test_typed_and_stable_actions_are_deterministic():
     assert action_id("Ask a Question") == "coimbatore_pontoon_ask_question"
     assert action_id("Talk to Sales Person") == "coimbatore_pontoon_talk_sales"
     assert action_id("Check Couple Package") == "coimbatore_pontoon_check_couple"
+    quoted_package_reply = (
+        "Pontoon Boat Celebration Package\n\nInclusions:\nCake\nDecoration\n\n"
+        "See Photo & Video"
+    )
+    assert action_id(quoted_package_reply) == "coimbatore_pontoon_more_photos"
     assert is_package_request("what is standard package")
     assert is_package_request("send package")
 

@@ -284,7 +284,7 @@ class CoimbatoreInboundOrchestrator:
                 selected_action, replace(active, form_values=values)
             )
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
-        if selected_action and package_qualification_ready(active):
+        if selected_action and _package_action_context_available(active, selected_action):
             result = self._handle_package_action(selected_action, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
         requested_package = package_request_id(content)
@@ -425,7 +425,7 @@ class CoimbatoreInboundOrchestrator:
         selected_action = action_id(content)
         explicit_package_request = is_package_request(content)
         was_presented = package_presented(active)
-        if selected_action and package_qualification_ready(active):
+        if selected_action and _package_action_context_available(active, selected_action):
             result = self._handle_package_action(selected_action, active)
         elif active.sales_stage == SalesStage.INTERESTED:
             result = _collect_booking_details(content, active)
@@ -981,6 +981,16 @@ def _is_greeting(text: object) -> bool:
 def _is_unexpected_qualification_input(text: object) -> bool:
     """Recognize empty/punctuation-only replies while qualification is active."""
     return not isinstance(text, str) or not text.strip() or not re.search(r"[A-Za-z0-9]", text)
+
+
+def _package_action_context_available(context: ConversationContext, action: str) -> bool:
+    """Allow package CTAs even when the customer has not chosen a date yet."""
+    if action == "coimbatore_pontoon_book_standard":
+        return package_qualification_ready(context)
+    values = context.form_values or {}
+    return values.get("active_package_id") in {STANDARD_PACKAGE_ID, COUPLE_PACKAGE_ID} or bool(
+        values.get("standard_package_id")
+    )
 
 
 def _is_information_question(text: object) -> bool:

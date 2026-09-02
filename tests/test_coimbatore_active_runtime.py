@@ -130,6 +130,22 @@ def test_unknown_second_step_sends_default_standard_package():
     assert "₹5,100" in result.draft_text
 
 
+def test_default_package_photo_button_works_without_guest_or_date():
+    service, _contexts = orchestrator()
+    run(service, "Hi")
+    offered = run(service, "not sure what to write")
+    confirm_package(service, offered)
+
+    result = run(service, "See Photo & Video")
+
+    assert result.draft_text.startswith(
+        "Here are the approved Pontoon Celebration photos and videos"
+    )
+    assert [item["type"] for item in result.safe_metadata["media_sequence"]] == [
+        "image", "image", "video", "video",
+    ]
+
+
 @pytest.mark.parametrize(
     "message",
     ["7 people, date is not decided", "7 guests and we are not sure about the date", "7 people, no date yet"],
