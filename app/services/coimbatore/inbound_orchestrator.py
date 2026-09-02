@@ -338,6 +338,21 @@ class CoimbatoreInboundOrchestrator:
         if active.sales_stage == SalesStage.INTERESTED:
             result = _collect_booking_details(content, active)
             return self._finalize(result, customer_id, conversation_id, fresh, source_message_id)
+        # A customer may ask an informational question before completing guest/date
+        # qualification. Let the grounded understanding + RAG path answer it instead
+        # of replacing the question with the generic welcome prompt.
+        if fresh and _is_information_question(content):
+            question_values = dict(active.form_values or {})
+            question_values.setdefault("active_package_id", STANDARD_PACKAGE_ID)
+            question_context = replace(active, form_values=question_values)
+            llm_result = self._process_llm_turn(
+                str(content), question_context, fresh=fresh,
+                source_message_id=source_message_id,
+            )
+            if llm_result is not None:
+                return self._finalize(
+                    llm_result, customer_id, conversation_id, fresh, source_message_id,
+                )
         if (
             fresh
             and (active.details.preferred_date is None or active.details.total_guests is None)
@@ -966,6 +981,20 @@ def _is_greeting(text: object) -> bool:
 def _is_unexpected_qualification_input(text: object) -> bool:
     """Recognize empty/punctuation-only replies while qualification is active."""
     return not isinstance(text, str) or not text.strip() or not re.search(r"[A-Za-z0-9]", text)
+
+
+def _is_information_question(text: object) -> bool:
+    """Recognize customer questions that should be answered before qualification."""
+    if not isinstance(text, str):
+        return False
+    value = text.strip().casefold()
+    if not value or _is_greeting(value):
+        return False
+    return "?" in value or bool(re.search(
+        r"\b(?:what|where|when|why|how|which|can|could|do|does|is|are|tell|explain|"
+        r"duration|duartion|dura(?:t)?ion|timing|minutes?|included|available)\b",
+        value,
+    ))
 
 
 def _is_coimbatore_location_question(text: object) -> bool:

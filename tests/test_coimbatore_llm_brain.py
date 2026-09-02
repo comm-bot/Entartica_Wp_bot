@@ -49,7 +49,7 @@ def interpretation(message, _context):
     if "we are couple" in value: return meaning(CustomerIntent.QUALIFICATION_UPDATE, guest_count=2, guest_count_explicit=True, package_reference=PackageReference.CURRENT)
     if "we are 5 people" in value: return meaning(CustomerIntent.QUALIFICATION_UPDATE, guest_count=5, guest_count_explicit=True, package_reference=PackageReference.CURRENT)
     if "flavour" in value or "kind of cake" in value: return meaning(CustomerIntent.FAQ, topic="cake", attribute="flavour", package_reference=PackageReference.CURRENT)
-    if "duration" in value or "how long" in value: return meaning(CustomerIntent.FAQ, topic="duration", attribute="ride_duration", package_reference=PackageReference.CURRENT)
+    if "duration" in value or "duartion" in value or "how long" in value: return meaning(CustomerIntent.FAQ, topic="duration", attribute="ride_duration", package_reference=PackageReference.CURRENT)
     if "only 2 pyro" in value: return meaning(CustomerIntent.FAQ_CLARIFICATION, topic="pyro", attribute="quantity", mentioned_number=2, guest_count_explicit=False, package_reference=PackageReference.CURRENT)
     if "what is pyro" in value: return meaning(CustomerIntent.FAQ_DEFINITION, topic="pyro", attribute="meaning", package_reference=PackageReference.CURRENT)
     if "250 g" in value: return meaning(CustomerIntent.FAQ_CLARIFICATION, topic="cake", attribute="weight", mentioned_number=250)
@@ -118,6 +118,17 @@ def test_attribute_level_cake_duration_and_new_paraphrase_use_llm_and_rag():
     assert "30-minute" in duration.draft_text and "₹3,999" not in duration.draft_text
     paraphrase = run(bot, "What kind of cake do you guys give with this?")
     assert "available flavour" in paraphrase.draft_text
+
+
+def test_fresh_misspelled_duration_question_is_answered_before_qualification():
+    bot = service()
+
+    result = run(bot, "what is the duartion of pontton boat celebration?")
+
+    assert "30-minute" in result.draft_text
+    assert result.safe_metadata["understanding_mode"] == "llm"
+    assert result.safe_metadata["rag_used"] is True
+    assert "How many guests" not in result.draft_text
 
 
 def test_fresh_package_interest_gets_full_welcome_then_auto_standard_draft():
